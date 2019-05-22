@@ -1,0 +1,1119 @@
+#!/bin/bash
+#
+#See usage().
+#
+#Copyright (C) 2019  David Hobach  GPLv3
+#version: 0.7
+#
+#This program is free software: you can redistribute it and/or modify
+#it under the terms of the GNU General Public License as published by
+#the Free Software Foundation, either version 3 of the License, or
+#(at your option) any later version.
+#
+#This program is distributed in the hope that it will be useful,
+#but WITHOUT ANY WARRANTY; without even the implied warranty of
+#MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#GNU General Public License for more details.
+#
+#You should have received a copy of the GNU General Public License
+#along with this program. If not, see <https://www.gnu.org/licenses/>.
+#
+
+#init blib
+source blib || { >&2 echo "This script depends on blib (https://github.com/3hhh/blib). Please install blib first." ; exit 1 ; }
+eval "$B_SCRIPT"
+b_import "arr"
+b_import "args"
+b_import "daemon"
+b_import "proc"
+b_import "ini"
+b_import "multithreading/mtx"
+b_import "os/qubes4/dom0"
+
+#path to the qcrypt binary
+QCRYPT="$B_SCRIPT_DIR/qcrypt"
+
+#main & secondary configuration directory
+QCRYPTD_CONF="/etc/$B_SCRIPT_NAME"
+QCRYPTD_CONF_2="$B_SCRIPT_DIR/conf"
+
+#distinguish the B_E exit code from the "normal" error
+B_RC=6
+
+#daemon ID to uniquely identify the background process
+DID="$B_SCRIPT_NAME"
+
+#whether or not the daemon was initialized
+DAEMON_INIT_DONE=1
+
+#debug mode on/off switch (-v flag)
+DEBUG=1
+
+#used by the daemon to store the configuration target
+CONF_TARGET=
+
+#0 = the main loop should process events; everything else = it should exit
+PROCESS_EVENTS=0
+
+#internal configuration representation
+#array chains	 : all chains managed by qcryptd
+#map chains2info : chain ids --> all config input, chain start/stop command
+#map vms2cains   : all VMs --> list of related chain ids
+#
+#terminology:
+#chain id: anything uniquely identifying a chain (can be the config file or a sourceVM:device:file combination)
+#		here: config file (without .ini)
+#device: identified by its full path (recommended: /dev/disk/* ) inside a specifc VM, can be related to multiple chains (e.g. different file on the same device)
+#		here: [source VM]:[source device]
+declare -ga CHAINS=()
+declare -gA CHAINS2INFO=()
+declare -gA VMS2CHAINS=()
+
+#maps tracking currently active devices, VMs and chains
+#ACTIVE_VMS / V:	VM name   --> 0/1
+#ACTIVE_CHAINS / C:	chain id  --> 0/1 (use isActive [chain] to obtain the most recent state rather than this one)
+declare -gA ACTIVE_VMS=()
+declare -gA ACTIVE_CHAINS=()
+
+#helper maps for onQubesEvent 
+#LAST_ATTACHED: stores events and their times related to device attachments
+#SUPPRESSION: used to suppress the same event occurring in a very short time
+declare -gA LAST_ATTACHED=()
+declare -gA SUPPRESSION=()
+
+function usage {
+echo "
+Usage: $B_SCRIPT_NAME [options] [command]
+
+Automatically manage qcrypt chains on VM starts/stops as well as device attachments.
+
+The daemon must be configured via ini files at the below configuration directory  before it can be used. Each configuration file represents
+a single chain. You can find configuration examples inside the 'examples' directory.
+
+Configuration directories:
+$QCRYPTD_CONF
+$QCRYPTD_CONF_2
+
+[command] may be one of:
+
+start [target]
+	Start the qcrypt daemon in the background.
+
+	[target]	Defines the configuration directory to use (default: default).
+
+	Options:
+	-v		Start the daemon in verbose mode. This will produce output suitable for debugging, but possibly with a performance
+			impact. Verbose mode is supported by all commands.
+
+stop
+	Stop the running qcrypt daemon.
+
+	Options:
+	-c		Close all qcrypt chains before shutting the daemon down. This can also fix partially closed chains. By default,
+			all qcrypt chains are left as-is. It is recommended to stop with -c before switching to a different configuration.
+			May trigger Qubes OS bug #4784.
+
+restart [target]
+	Restart the qcrypt daemon. Configuration changes always require a daemon restart to become effective.
+	
+	[target]	The target for the start operation (default: default).
+
+	Options:
+	-c		See stop.
+
+check [target]
+	Check the given target configuration for correctness. If no issues are found, a zero exit code is set. It is recommended to use this
+	operation before deploying a new configuration.
+
+	[target]	The target to check (default: default).
+
+chains [target]
+	Show the qcrypt status commands for all chains related to the given configuration target (default: default).
+
+	Options:
+	-nc		Don't display the configuration files.
+	-e		Execute the qcrypt status commands and provide a short summary for each. The qcryptd exit code indicates the number
+			of chains in an invalid state.
+
+status
+	Check whether a qcrypt daemon is running in the background. If you need information about the currently active qcrypt chains, please
+	use the qcrypt status output. Sets a zero exit code, if a qcrypt daemon is running and a non-zero exit code otherwise.
+
+help
+	print this help"
+exit 1
+}
+
+#checkDependencies
+#Checks whether the current bash environment suffices the dependency requirements to run this script.
+#returns: Nothing, but errors out, if the dependencies are not met.
+#@B_E
+function checkDependencies {
+local deps="sort
+qvm-ls"
+b_checkDeps "$deps" || { B_ERR="Not all required dependencies to run $B_SCRIPT_NAME are installed." ; B_E }
+}
+
+#parseIniKey [chain id] [key] [type] [required] [fallback]
+#Parse ini information to CHAINS2INFO.
+#[chain id]: Chain to do the parsing for.
+#[key]: Name of the ini key to parse.
+#[type]: 1=string, 2=bool, 3=int
+#[required]: whether the value is required (0) or not
+#[fallback]: fallback value to set if no value is specified (for the optional ones only) (default: empty)
+#returns: Prints errors and sets a non-zero exit code if they occur.
+function parseIniKey {
+local chainId="$1"
+local key="$2"
+local type="$3"
+local required="${4:-0}"
+local fallback="$5"
+local ret=0
+
+case $type in
+	1)
+		CHAINS2INFO["${chainId}_$key"]="$(b_ini_getString "$key")"
+		ret=$?
+		;;
+	2)
+		CHAINS2INFO["${chainId}_$key"]="$(b_ini_getBool "$key")"
+		ret=$?
+		;;
+	3)
+		CHAINS2INFO["${chainId}_$key"]="$(b_ini_getInt "$key")"
+		ret=$?
+		;;
+	*)
+		B_ERR="Unexpected type: $type"
+		B_E
+esac
+
+case $ret in
+	0)
+		#NOTE: the value may still be ""
+		:
+		;;
+	1)
+		if [ $required -eq 0 ] ; then
+			echo "Missing: $key"
+			return 1
+		fi
+		;;
+	2)
+		echo "Parsing error: $key"
+		return 2
+		;;
+	*)
+		B_ERR="Unexpected exit code: $ret"
+		B_E
+esac
+
+#set fallback if required
+if [ -z "${CHAINS2INFO["${chainId}_$key"]}" ] ; then
+	if [ -n "$fallback" ] ; then
+		CHAINS2INFO["${chainId}_$key"]="$fallback"
+	elif [ $required -eq 0 ] ; then
+		echo "Missing: $key"
+		return 1
+	fi
+fi
+
+return 0
+}
+
+#parseConfigFile [file]
+#Parse the given configuration file and update the current configuration state accordingly.
+#[file]: Full path to the ini file to parse.
+#returns: Nothing, but triggers [B_E](#B_E) on errors.
+#@B_E
+#@StateChanging
+function parseConfigFile {
+local file="$1"
+b_ini_read "$file" || { B_ERR="Failed to parse the file $file." ; B_E }
+
+local chainId="${file##*/}"
+chainId="${chainId%.ini}"
+[ -z "$chainId" ] && B_ERR="Empty chain ID. Programming mistake?!" && B_E
+CHAINS+=("$chainId")
+CHAINS2INFO["${chainId}_config file"]="$file"
+
+#populate parts of CHAINS2INFO
+local errCnt=0
+parseIniKey "$chainId" "source vm" 1 0 || ((errCnt+=1))
+parseIniKey "$chainId" "source device" 1 1 || ((errCnt+=1))
+parseIniKey "$chainId" "source mount point" 1 1 || ((errCnt+=1))
+parseIniKey "$chainId" "source file" 1 0 || ((errCnt+=1))
+parseIniKey "$chainId" "key" 1 0 || ((errCnt+=1))
+local i=
+local out=""
+for ((i=1;;i++)) ; do
+	if [ $i -eq 1 ] ; then
+		parseIniKey "$chainId" "destination vm $i" 1 0 || ((errCnt+=1))
+	else
+		#probe first, then parse
+		out="$(parseIniKey "$chainId" "destination vm $i" 1 0)" || break
+		parseIniKey "$chainId" "destination vm $i" 1 0
+	fi
+	parseIniKey "$chainId" "destination inj $i" 1 1 || ((errCnt+=1))
+done
+parseIniKey "$chainId" "destination mount point" 1 1 || ((errCnt+=1))
+parseIniKey "$chainId" "autostart" 2 1 "1" || ((errCnt+=1))
+#NOTE: read-only is set to true by default to prevent accidents (always make the more secure alternative the default)
+parseIniKey "$chainId" "read-only" 2 1 "0" || ((errCnt+=1))
+parseIniKey "$chainId" "type" 1 1 "luks" || ((errCnt+=1))
+parseIniKey "$chainId" "startup interval" 3 1 "300" || ((errCnt+=1))
+parseIniKey "$chainId" "pre open command" 1 1 || ((errCnt+=1))
+parseIniKey "$chainId" "post open command" 1 1 || ((errCnt+=1))
+parseIniKey "$chainId" "pre close command" 1 1 || ((errCnt+=1))
+parseIniKey "$chainId" "post close command" 1 1 || ((errCnt+=1))
+
+#check for errors
+[ $errCnt -ne 0 ] && B_ERR="Exiting due to the above configuration errors." && B_E
+
+#validate keys
+local toCheck=("source vm" "source device" "source mount point" "source file" "key" "destination mount point" "autostart" "read-only" "type" "startup interval" "pre open command" "post open command" "pre close command" "post close command")
+for ((i=1;i<=10;i++)) ; do
+	toCheck+=("destination vm $i")
+	toCheck+=("destination inj $i")
+done
+b_ini_assertNames "" "${toCheck[@]}" 
+
+#generate open, close & status commands for the chain (required for initializeActiveChains)
+generateCommandsFor "$chainId"
+
+#add chain mutex
+CHAINS2INFO["${chainId}_mutex"]="$(b_mtx_create)"
+
+#populate VMS2CHAINS (may add duplicates for circular chains)
+local vm="${CHAINS2INFO["${chainId}_source vm"]}"
+VMS2CHAINS["$vm"]="$chainId"$'\n'"${VMS2CHAINS["$vm"]}"
+for ((i=1;;i++)) ; do
+	vm="${CHAINS2INFO["${chainId}_destination vm $i"]}"
+	[ -z "$vm" ] && break
+	VMS2CHAINS["$vm"]="$chainId"$'\n'"${VMS2CHAINS["$vm"]}"
+done
+}
+
+#generateCommandsFor [chain id]
+#Generates the relevant qcrypt commands for the given chain and stores them inside CHAINS2INFO.
+#Make sure to call it again whenever CHAINS2INFO changes (e.g. the source mount point happens to be a different one).
+#[chain id]: Chain to generate commands for.
+#returns: Nothing, but triggers [B_E](#B_E) on errors.
+#@B_E
+function generateCommandsFor {
+local chainId="$1"
+
+#generate generic argument chain common to all commands
+local srcFull="${CHAINS2INFO["${chainId}_source mount point"]}/${CHAINS2INFO["${chainId}_source file"]}"
+local argChain=
+printf -v argChain '%q %q %q' "${CHAINS2INFO["${chainId}_source vm"]}" "$srcFull" "${CHAINS2INFO["${chainId}_key"]}"
+local i=
+local vm=
+local options=""
+local inj=
+for ((i=1;;i++)) ; do
+	vm="${CHAINS2INFO["${chainId}_destination vm $i"]}"
+	[ -z "$vm" ] && break
+	printf -v argChain '%s %q' "$argChain" "$vm"
+	inj="${CHAINS2INFO["${chainId}_destination inj $i"]}"
+	if [ -n "$inj" ] ; then
+		printf -v options '%s -inj %q %q' "$options" "$vm" "$inj"
+	fi
+done
+
+#open command
+local cmd=
+[ ${CHAINS2INFO["${chainId}_autostart"]} -eq 0 ] && options="$options -a"
+[ ${CHAINS2INFO["${chainId}_read-only"]} -eq 0 ] && options="$options --ro"
+[ -n "${CHAINS2INFO["${chainId}_destination mount point"]}" ] && printf -v options '%s -mp %q' "$options" "${CHAINS2INFO["${chainId}_destination mount point"]}"
+[ -n "${CHAINS2INFO["${chainId}_type"]}" ] && printf -v options '%s --type %q' "$options" "${CHAINS2INFO["${chainId}_type"]}"
+printf -v cmd '%q %s open -- %s' "$QCRYPT" "$options" "$argChain"
+CHAINS2INFO["${chainId}_open"]="$cmd"
+
+#status command
+printf -v cmd '%q status -- %s' "$QCRYPT" "$argChain"
+CHAINS2INFO["${chainId}_status"]="$cmd"
+
+#close command
+printf -v cmd '%q close --force -- %s' "$QCRYPT" "$argChain"
+CHAINS2INFO["${chainId}_close"]="$cmd"
+}
+
+#getConfigFolder [target]
+#Get the configuration folder for the given target.
+#returns: The folder or errors out with [B_E](#B_E), if no such config folder exists.
+#@B_E
+function getConfigFolder {
+local target="${1:-default}"
+local targetFolder="$QCRYPTD_CONF/$target"
+[ -d "$targetFolder" ] && { echo "$targetFolder" ; return 0 ; } || targetFolder="$QCRYPTD_CONF_2/$target"
+[ -d "$targetFolder" ] && { echo "$targetFolder" ; return 0 ; } || { B_ERR="No configuration for the target $target found in either $QCRYPT_CONF or $QCRYPTD_CONF_2." ; B_E }
+}
+
+#parseConfigFiles [target]
+#Parse all config files for the given target.
+#[target]: Configuration target.
+#returns: Nothing, but triggers [B_E](#B_E) on errors.
+#@B_E
+#@StateChanging
+function parseConfigFiles {
+local target="${1:-default}"
+local targetFolder=""
+targetFolder="$(getConfigFolder "$target")" || { B_ERR="The configuration for the target $target does not exist." ; B_E }
+
+local file=
+for file in "$targetFolder/"*.ini ; do
+	if [ -f "$file" ] ; then
+		parseConfigFile "$file"
+	fi
+done
+
+#remove duplicates from VMS2CHAINS
+local list=
+local key=
+for key in "${!VMS2CHAINS[@]}" ; do
+	list="${VMS2CHAINS["$key"]}"
+	list="$(echo "$list" | sort -u)"
+	VMS2CHAINS["$key"]="$list"
+done
+
+return 0
+}
+
+#see check @usage
+#@B_E
+function checkC {
+parseConfigFiles "${B_ARGS[1]}"
+
+if [ $DEBUG -eq 0 ] ; then
+	declare -p CHAINS
+	declare -p CHAINS2INFO
+	declare -p VMS2CHAINS
+fi
+
+echo "All good."
+exit 0
+}
+
+#see chains @usage
+#@B_E
+function chainsC {
+parseConfigFiles "${B_ARGS[1]}"
+local execute=1
+[ -n "${B_ARGS_OPTS["-e_0"]+exists}" ] && execute=0
+local showConfigFiles=0
+[ -n "${B_ARGS_OPTS["-nc_0"]+exists}" ] && showConfigFiles=1
+
+local ret=0
+local chain=
+
+local badChains=""
+if [ $execute -eq 0 ] ; then
+	badChains="$(getBadChains "$(b_arr_toList "${CHAINS[@]}")")" || { B_ERR="Failed to obtain the list of chains which are in a bad state." ; B_E }
+fi
+
+local prefix=""
+local format='%s%s'$'\n'
+[ $showConfigFiles -eq 0 ] && format='%-25s%s'$'\n'
+for chain in "${CHAINS[@]}" ; do
+	[ $showConfigFiles -eq 0 ] && prefix="${CHAINS2INFO["${chain}_config file"]##*/}: "
+	printf "$format" "$prefix" "${CHAINS2INFO["${chain}_status"]}"
+	if [ $execute -eq 0 ] ; then
+		local state="good"
+		b_listContains "$badChains" "$chain" && state="bad" && ret=$(( $ret +1 ))
+		printf '  state: %s'$'\n' "$state"
+	fi
+done
+
+exit $ret
+}
+
+#see stop @usage
+#@B_E
+function stopC {
+#parse params
+local termSignal=10
+[ -n "${B_ARGS_OPTS["-c_0"]+exists}" ] && termSignal=12
+
+b_daemon_stop "$DID" "$termSignal" 0
+}
+
+#logError [message] [notify] [notification summary]
+#[notify]: If set to 0, send a user notification as well (default: 1)
+function logError {
+local msg="$1"
+local notify="${2:-1}"
+local summary="${3:-"$B_SCRIPT_NAME: ERROR"}"
+[ $DEBUG -eq 0 ] && echo "$SECONDS [$BASHPID] ERROR: $msg"
+logger -p daemon.err -t "$B_SCRIPT_NAME" "[$BASHPID] $msg (target: $CONF_TARGET)"
+[ $notify -eq 0 ] && notify-send -u critical -t 15000 "$summary" "$msg"
+return 0
+}
+
+#logInfo [message] [notify] [notification summary]
+#[notify]: If set to 0, send a user notification as well (default: 1)
+function logInfo {
+local msg="$1"
+local notify="${2:-1}"
+local summary="${3:-"$B_SCRIPT_NAME: INFO"}"
+[ $DEBUG -eq 0 ] && echo "$SECONDS [$BASHPID] INFO: $msg"
+logger -p daemon.notice -t "$B_SCRIPT_NAME" "[$BASHPID] $msg (target: $CONF_TARGET)"
+[ $notify -eq 0 ] && notify-send "$summary" "$msg"
+return 0
+}
+
+function logState {
+[ $DEBUG -eq 0 ] && echo $'\n'"STATE BEGIN"
+logInfo "$(declare -p CHAINS)"
+logInfo "$(declare -p CHAINS2INFO)"
+logInfo "$(declare -p VMS2CHAINS)"
+logInfo "$(declare -p ACTIVE_VMS)"
+logInfo "$(declare -p ACTIVE_CHAINS)"
+logInfo "$(declare -p LAST_ATTACHED)"
+logInfo "$(declare -p SUPPRESSION)"
+#logInfo "$(qvm-ls -q --no-spinner)"
+#logInfo "$(qvm-block ls)"
+[ $DEBUG -eq 0 ] && echo "STATE END"$'\n'
+}
+
+#loggingErrorHandler [error out]
+function loggingDaemonErrorHandler {
+local errorOut=${1:-0}
+
+#set the proper exit code
+if [ $errorOut -eq 0 ] ; then
+	#only the daemon itself should cause FATALs
+	if [ $BASHPID -eq $$ ] ; then
+		[ $DEBUG -eq 0 ] && logState
+		logError "FATAL: $B_ERR" 0
+		logError "Daemon exiting..."
+	else
+		logError "$B_ERR Child thread exiting..."
+	fi
+	return 2
+else
+	logInfo "$B_ERR"
+	return 1
+fi
+}
+
+#chainVMsAreRunning [chain id]
+#Check whether all VMs of the given chain are running.
+#[chain id]: ID of a single chain.
+#returns: Sets a zero exit code, if all involved VMs are running and a non-zero exit code otherwise.
+function chainVMsAreRunning {
+local chain="$1"
+
+#check source VM
+local vm="${CHAINS2INFO["${chain}_source vm"]}"
+if [ -z "${ACTIVE_VMS["$vm"]}" ] || [ ${ACTIVE_VMS["$vm"]} -ne 0 ] ; then
+	return 1
+fi
+
+#check destination VMs
+local i=
+for ((i=1;;i++)) ; do
+	vm="${CHAINS2INFO["${chain}_destination vm $i"]}"
+	[ -z "$vm" ] && break
+
+	if [ -z "${ACTIVE_VMS["$vm"]}" ] || [ ${ACTIVE_VMS["$vm"]} -ne 0 ] ; then
+		return 1
+	fi
+done
+return 0
+}
+
+#prepareChainOpen [chain id]
+#Do all preparations necessary to open the given qcrypt chain, which _must_ run in the main thread/daemon as they are _not_ thread safe.
+#[chain id]: ID of a single chain.
+#returns: Sets a zero exit code, if the preparations were successful and a chain start may now proceed. Otherwise a non-zero exit code is set. Unexpected errors are logged.
+#@StateChanging
+function prepareChainOpen {
+#NOTE: qcrypt does any autostart, the started VMs will trigger new events and the daemon state will be updated accordingly --> nothing to do for that
+local chain="$1"
+
+local srcVM="${CHAINS2INFO["${chain}_source vm"]}"
+local srcDev="${CHAINS2INFO["${chain}_source device"]}"
+local srcMp="${CHAINS2INFO["${chain}_source mount point"]}"
+
+#special case: autostart enabled & source VM not running (yet)
+local ret=3
+if [[ ${CHAINS2INFO["${chain}_autostart"]} -eq 0 && ( -z ${ACTIVE_VMS["$srcVM"]} || ${ACTIVE_VMS["$srcVM"]} -ne 0 ) ]] ; then
+	b_setBE 1
+	b_dom0_ensureRunning "$srcVM"
+	ret=$?
+	b_resetErrorHandler 1
+	if [ $ret -eq 0 ] ; then
+		ACTIVE_VMS["$srcVM"]=0
+	else
+		logError "Failed to start the VM $srcVM. Original error: $B_ERR"
+		B_ERR=""
+		return $ret
+	fi
+fi
+
+#mount source device, if necessary
+#NOTE: _not_ thread safe (e.g. b_dom0_mountIfNecessary for the same source VM & device)!
+local out=""
+if [ -n "$srcDev" ] && [ -n "$srcMp" ] && [[ "$srcMp" != "/" ]] ; then
+	b_setBE 1
+	#NOTE: for security reasons we enforce our mount point (we don't want to read the untrusted VM output and pass it to our internal state)
+	b_silence b_dom0_mountIfNecessary "$srcVM" "$srcDev" "$srcMp" 0
+	ret=$?
+	b_resetErrorHandler 1
+	[ $ret -ne 0 ] && logError "Failed to mount the source device $srcVM:$srcDev to $srcMp (chain $chain). Device not available? Original error: $B_ERR"
+	B_ERR=""
+	return $ret
+else
+	#local file, opening should work
+	return 0
+fi
+}
+
+#updateChainState [chain] [wait flag]
+#Updates the ACTIVE_CHAINS array for the given chain with the latest information available.
+#[wait flag]: If set to 0, even wait for on-going operations to complete (default: 1).
+#returns: Nothing.
+function updateChainState {
+local chain="$1"
+local waitFlag="${2:-1}"
+local ret=
+
+local pid="${CHAINS2INFO["${chain}_last open pid"]}"
+[ -z "$pid" ] && return 0
+
+if [ $waitFlag -ne 0 ] ; then
+	#is the background process still running?
+	b_proc_childExists "$pid" && return 0
+fi
+
+if wait "$pid" ; then
+	#we thought the chain open anyway --> nothing to do (especially since we might have closed in the meantime)
+	:
+else
+	#the last chain open failed --> update the internal state
+	ACTIVE_CHAINS["$chain"]=1
+fi
+CHAINS2INFO["${chain}_last open pid"]=""
+
+return 0
+}
+
+#isActive [chain] [wait flag]
+#Check whether the given chain is active according to the latest information.
+#Must be run in the foreground by the daemon itself.
+#[wait flag]: If set to 0, even wait for on-going operations to complete (default: 1).
+#returns: A zero exit code if and only if it is active according to the latest information.
+function isActive {
+local chain="$1"
+local waitFlag="$2"
+updateChainState "$chain" "$waitFlag"
+[ -n "${ACTIVE_CHAINS["$chain"]}" ] && [ ${ACTIVE_CHAINS["$chain"]} -eq 0 ]
+}
+
+#openSingleChain [chain id]
+#Open a single chain in the foreground. Helper function for [openChains](#openChains), which must be used over this one.
+#returns: An exit code of 0, if and only if the chain was successfully opened. Errors are logged.
+#@B_E
+function openSingleChain {
+local chain="$1"
+
+#make sure previous operations are completed
+local release=
+release="$(b_mtx_waitFor "${CHAINS2INFO["${chain}_mutex"]}" "$BASHPID")" || { B_ERR="Failed to obtain a mutex." ; B_E }
+trap "$release" EXIT RETURN
+
+#execute the pre open command
+local cmd="${CHAINS2INFO["${chain}_pre open command"]}"
+if [ -n "$cmd" ] ; then
+	eval "$cmd" || { B_ERR="The pre open command for the chain $chain returned a non-zero exit code. Thus aborting the chain open process." ; B_E }
+fi
+
+#open the chain
+cmd="${CHAINS2INFO["${chain}_open"]}"
+[ -z "$cmd" ] && B_ERR="Missing open command for chain $chain. Programming error?!" && B_E
+eval "$cmd" || { B_ERR="Failed to open the chain $chain. Check ${CHAINS2INFO["${chain}_status"]} for details." ; B_E }
+
+#execute the post open command
+cmd="${CHAINS2INFO["${chain}_post open command"]}"
+[ -n "$cmd" ] && eval "$cmd"
+
+logInfo "Opened the chain $chain." 0 "$B_SCRIPT_NAME status: $chain"
+return 0
+}
+
+#openChains [wait flag] [chain id 1] ... [chain id n]
+#[wait flag]: If set to 0, wait for on-going chain status changes possibly affecting our decision to close a chain.
+#Check whether it makes sense to open the given chains and if so, attempt it.
+#returns: Nothing. Errors are logged.
+function openChains {
+local waitFlag="$1"
+shift
+
+local chain=
+for chain in "$@" ; do
+	#filter active chains
+	isActive "$chain" "$waitFlag" && continue
+
+	#filter chains with shut down VMs
+	if [ ${CHAINS2INFO["${chain}_autostart"]} -ne 0 ] ; then
+		chainVMsAreRunning "$chain" || continue
+	fi
+
+	#do not open too often to prevent continuous re-open attempts in case of errors
+	local last="${CHAINS2INFO["${chain}_last open"]}"
+	[ -n "$last" ] && [ $(( $SECONDS - $last )) -le ${CHAINS2INFO["${chain}_startup interval"]} ] && continue
+
+	#prepare (not thread safe, so must be run here)
+	prepareChainOpen "$chain" || continue
+
+	#open in background
+	#NOTE: we aggressively assume that the chain goes active in the background, but re-check that assumption with isActive whenever needed
+	logInfo "Attempting to open the chain $chain..."
+	openSingleChain "$chain" < /dev/null &
+	ACTIVE_CHAINS["$chain"]=0
+	CHAINS2INFO["${chain}_last open"]="$SECONDS"
+	CHAINS2INFO["${chain}_last open pid"]="$!"
+done
+
+return 0
+}
+
+#openChainsByVM [v] [all]
+#Attempt to open all chains related to the given VM.
+#An implementation of openChainsByVM(v,all).
+#[v]: A VM name.
+#[all]: all VMs are relevant (default, 0); if set to 1, only source VMs are relevant
+#returns: Nothing. Startup errors not caused by parts of the chain not being available will be logged.
+function openChainsByVM {
+local vm="$1"
+local all="${2:-0}"
+
+#get the applicable chains
+local chains="${VMS2CHAINS["$vm"]}"
+
+local chain=
+local toOpen=()
+while IFS= read -r chain ; do
+	[ -z "$chain" ] && continue
+	[ $all -ne 0 ] && [[ "$vm" != "${CHAINS2INFO["${chain}_source vm"]}" ]] && continue
+	toOpen+=("$chain")
+done <<< "$chains"
+
+openChains 1 "${toOpen[@]}"
+}
+
+#closeSingleChain [chain id]
+#Close a single chain in the foreground. Helper function for [closeChains](#closeChains), which must be used over this one.
+#returns: An exit code of 0, if and only if the chain was successfully closed.
+#@B_E
+function closeSingleChain {
+local chain="$1"
+
+#make sure previous operations are completed
+local release=
+release="$(b_mtx_waitFor "${CHAINS2INFO["${chain}_mutex"]}" "$BASHPID")" || { B_ERR="Failed to obtain a mutex." ; B_E }
+trap "$release" EXIT RETURN
+
+#execute the pre close command
+local cmd="${CHAINS2INFO["${chain}_pre close command"]}"
+[ -n "$cmd" ] && eval "$cmd"
+
+#close the chain
+cmd="${CHAINS2INFO["${chain}_close"]}"
+[ -z "$cmd" ] && B_ERR="Missing close command for chain $chain. Programming error?!" && B_E
+eval "$cmd" || logError "Failed to correctly close the chain $chain. Assuming it closed anyway and proceeding..."
+
+#execute the post close command
+cmd="${CHAINS2INFO["${chain}_post close command"]}"
+[ -n "$cmd" ] && eval "$cmd"
+
+logInfo "Closed the chain $chain." 0 "$B_SCRIPT_NAME status: $chain"
+return 0
+}
+
+#closeChains [force flag] [wait flag] [chain id 1] ... [chain id n]
+#[force flag]: Force a close attempt regardless of the current state.
+#[wait flag]: If set to 0, wait for on-going chain status changes possibly affecting our decision to close a chain.
+#returns: Nothing.
+function closeChains {
+local forceFlag="$1"
+local waitFlag="$2"
+shift 2
+
+local chain=
+for chain in "$@" ; do
+	#filter inactive chains
+	[ $forceFlag -ne 0 ] && ! isActive "$chain" "$waitFlag" && continue
+	
+	#close in background
+	logInfo "Attempting to close the chain $chain..."
+	closeSingleChain "$chain" < /dev/null &
+
+	#NOTE: we do _not_ wait for the close as we don't really care about the outcome: the next open attempt will also try another close beforehand & partial closes return a non-zero exit code anyway
+	#the next open however will wait for the last close and another overlapping close is not possible since the chain is now marked inactive
+	CHAINS2INFO["${chain}_last close"]="$SECONDS"
+	CHAINS2INFO["${chain}_last close pid"]="$!"
+	ACTIVE_CHAINS["$chain"]=1
+done
+return 0
+}
+
+#getBadChains [list]
+#Check the status of all given chains and filter the chain list to only contain the ones with a bad status.
+#[list] List of chains to check the status for.
+#returns: Filtered list of chains. Errors are logged.
+function getBadChains {
+local list="$1"
+local chain=
+local cmd=
+#chain id --> pid
+declare -A pids=()
+local now="$SECONDS"
+
+while IFS= read -r chain ; do
+	[ -z "$chain" ] && continue
+	#NOTE: all VMs are likely running (we only get here for device attachments), no need to check
+
+	#the open operation might not have completed yet
+	local pid="${CHAINS2INFO["${chain}_last open pid"]}"
+	[ -n "$pid" ] && b_proc_childExists "$pid" && continue
+
+	cmd="${CHAINS2INFO["${chain}_status"]}"
+	[ -z "$cmd" ] && B_ERR="Missing status command for chain $chain. Programming error?!" && B_E
+	eval "$cmd" &> /dev/null &
+	pids["$chain"]=$!
+done <<< "$list"
+
+for chain in "${!pids[@]}" ; do
+	! wait "${pids["$chain"]}" && echo "$chain"
+done
+
+return 0
+}
+
+#closeChainsByVM [v] [shutdown flag]
+#Close all chains related to the given VM.
+#An implementation of closeChainsByVM(v,VM shutdown=0|1).
+#[v]: A VM name.
+#[shutdown flag]: If the VM [v] was shut down and the chain requires closing for that reason (0) or the chains are expected to have other issues (e.g. device detached) (1).
+#returns: Nothing. Close errors will be logged.
+function closeChainsByVM {
+local vm="$1"
+local shutdown="$2"
+
+#get the applicable chains
+local chains="${VMS2CHAINS["$vm"]}"
+[ $shutdown -ne 0 ] && chains="$(getBadChains "$chains")"
+
+[ $DEBUG -eq 0 ] && echo $'\n'"$SECONDS Chains about to be closed (if active):"$'\n'"$chains"$'\n'
+
+local chain=
+local toClose=()
+while IFS= read -r chain ; do
+	[ -z "$chain" ] && continue
+	toClose+=("$chain")
+done <<< "$chains"
+
+closeChains 1 1 "${toClose[@]}"
+
+return 0
+}
+
+#initializeActiveVMs
+#Initialize the ACTIVE_VMS map with the currently active VMs.
+#returns: A zero exit code on success and a non-zero exit code otherwise. Unexpected errors will trigger [B_E](#B_E).
+#@B_E
+#@StateChanging
+function initializeActiveVMs {
+local running=
+running="$(qvm-ls --running -O NAME --raw-list)" || { B_ERR="Faled to execute qvm-ls." ; B_E }
+
+local vm=
+while IFS= read -r vm ; do
+	ACTIVE_VMS["$vm"]=0
+done <<< "$running"
+return 0
+}
+
+#initializeActiveChains
+#Initialize the ACTIVE_CHAINS map with the currently active qcrypt chain ids.
+#Currently depends on a previous run of [initializeActiveVMs](#initializeActiveVMs).
+#returns: A zero exit code on success and a non-zero exit code otherwise. Unexpected errors will trigger [B_E](#B_E).
+#@B_E
+#@StateChanging
+function initializeActiveChains {
+local chain=
+local cmd=
+for chain in "${CHAINS[@]}" ; do
+	cmd="${CHAINS2INFO["${chain}_status"]}"
+	[ -z "$cmd" ] && B_ERR="Failed to find the status command. Programming error?!" && B_E
+	chainVMsAreRunning "$chain" && eval "$cmd" && ACTIVE_CHAINS["$chain"]=0
+done
+return 0
+}
+
+#needsSuppression [vm] [event name] [event time]
+#Check whether the given event requires to be suppressed as it did recently occur already.
+#[event time]: in seconds since EPOCH
+#returns: A zero exit code, if the event should be suppressed.
+function needsSuppression {
+local vm="$1"
+local eventName="$2"
+local timestamp="$3"
+local key="${vm}_${eventName}"
+
+local last="${SUPPRESSION["$key"]}"
+SUPPRESSION["$key"]="$timestamp"
+
+echo ""
+echo "$SECONDS suppression check: $vm: $eventName"
+echo "last: $last"
+echo "cur: $timestamp"
+echo ""
+
+#suppress all events from less than a few seconds ago (same name, same VM)
+[ -n "$last" ] && [ $(( $timestamp - $last )) -le 3 ]
+}
+
+#onQubesEvent [subject] [event name] [event info] [timestamp]
+#Called for every Qubes OS event.
+#[subject]: The subject name Qubes OS provides. Usually the VM for which the event was reported. 'None' appears to mean 'dom0'.
+#[event name]: Name of the event for which the callback function was called.
+#[event info]: May contain additional information about the event (e.g. arguments).
+#[timestamp]: When the event was received in ms since EPOCH.
+#returns: Nothing. A non-zero exit code will abort further processing.
+function onQubesEvent {
+local vm="$1"
+local eventName="$2"
+#local eventInfo="$3"
+local timeSeconds="${4:0:10}"
+
+[ $PROCESS_EVENTS -ne 0 ] && return $PROCESS_EVENTS
+
+#init if necessary
+#NOTE: some things require initialization _in_ the event loop as we might otherwise lose events in the meantime
+if [ $DAEMON_INIT_DONE -ne 0 ] ; then
+	logInfo "Initializing..."
+	initializeActiveVMs
+	initializeActiveChains
+	openChains 1 "${CHAINS[@]}"
+
+	logInfo "Initialized."
+	[ $DEBUG -eq 0 ] && logState
+	DAEMON_INIT_DONE=0
+fi
+
+#handle the current event
+case "$eventName" in
+	#VM started
+	"domain-start")
+		ACTIVE_VMS["$vm"]=0
+
+		#react
+		#(no suppression needed, there's just one event)
+		echo "$SECONDS REACTION: VM started: $vm"
+		openChainsByVM "$vm"
+		;;
+	#VM stopped
+	"domain-shutdown")
+		ACTIVE_VMS["$vm"]=1
+
+		#some state cleanup
+		unset SUPPRESSION["${vm}_device-list-change:block"]
+
+		#react
+		#(no suppression needed, there's just one event)
+		echo "$SECONDS REACTION: VM stopped: $vm"
+		closeChainsByVM "$vm" 0
+		;;
+	#device attach or detach
+	#for USB devices the following appears to hold:
+	#	Device detached: one "device-list-change:block" event followed by one "device-list-change:usb" event in max 2 seconds
+	#	Device attached: one "device-list-change:usb" event followed by one "device-list-change:block" event in max 2 seconds
+	#for others (cloud mounts, ...) however we'll probably just see a single device-list-change:block event for *both* attach *and* detach
+	# --> we just try to open and close all chains related to that VM (may be expensive)
+	#     if Qubes OS ever gets some more details into its events, we could change that
+	"device-list-change:block")
+		#sometimes also triggered on shutdown
+			if [ "${ACTIVE_VMS["$vm"]}" -eq 0 ] ; then
+			#react
+			needsSuppression "$vm" "$eventName" "$timeSeconds" && return 0
+			echo "$SECONDS REACTION: Device attached or detached: $vm"
+			openChainsByVM "$vm" 1
+			closeChainsByVM "$vm" 1
+		fi
+		;;
+	*)
+		return 0
+esac
+
+#some debug info
+if [ $DEBUG -eq 0 ] ; then
+	logInfo "$vm: $eventName"
+	logState
+fi
+
+return 0
+}
+
+#shutdownDaemon [close all]
+#returns: Nothing. Never errors out.
+function shutdownDaemon {
+local closeAll="${1:-1}"
+clearTraps
+PROCESS_EVENTS=1
+
+#make sure the event loop process goes down _before_ the next event
+b_dom0_disconnectEventLoop
+
+if [ $closeAll -eq 0 ] ; then
+	logInfo "Received request to close all chains and shut down."
+	#NOTE: we force the close as chains may be partially closed and thus be marked as inactive
+	closeChains 0 1 "${CHAINS[@]}"
+else
+	logInfo "Received request to shut down."
+fi
+
+waitForBackgroundProcesses
+logInfo "Stopped."
+}
+
+function initTraps {
+trap 'shutdownDaemon 1' EXIT
+
+#ignore Ctrl-C etc. inside the daemon (this overwrites parts of the exit trap above)
+trap '' SIGTERM SIGINT SIGQUIT SIGHUP
+
+trap 'shutdownDaemon 1' SIGUSR1
+trap 'shutdownDaemon 0' SIGUSR2
+}
+
+function clearTraps {
+trap - EXIT
+trap - SIGUSR1
+trap - SIGUSR2
+}
+
+#waitForBackgroundProcesses
+#Wait for all currently running backround operations.
+function waitForBackgroundProcesses {
+local chain=
+local pid=
+for chain in "${CHAINS[@]}" ; do
+	pid="${CHAINS2INFO["${chain}_last open pid"]}"
+	[ -n "$pid" ] && wait "$pid"
+	pid="${CHAINS2INFO["${chain}_last close pid"]}"
+	[ -n "$pid" ] && wait "$pid"
+done
+return 0
+}
+
+#daemon main loop
+function daemon_main {
+#
+#service algorithmic sketch:
+#(NOTE: the device attach/detach events do not have the device IDs that we need, which had to be taken into account below)
+#
+# service start:
+# 	read all config files and create the following maps:
+# 		map chains2info : chain ids --> all config input, chain open/close command
+# 		map vms2cains   : all VMs --> list of related chain ids
+# 	enter the Qubes OS event loop
+# 		init:
+# 			map V: initialize with all active VMs
+# 			map C: initialize with all active chain ids
+# 			attempt to start all chains for which all required VMs are active
+# 		in the loop:
+# 			track VMs being started & stopped in map V
+# 			for every attached device in VM v: openChainsByVM(v,1)
+# 			for every detached device in VM v: closeChainsByVM(v,1)
+# 			for every started VM v: openChainsByVM(v,0)
+# 			for every stopped VM v: closeChainsByVM(v,0)
+# 		openChainsByVM(v,all=0|1):
+# 			get the applicable chains (map vms2chains)
+#			if all != 0: filter the list of applicable chains to only the ones which are source VMs
+#			filter all active chains according to C
+#			filter all chains with shut down VMs according to V
+#	 		attempt to open the remaining chains with qcrypt, track the success in C, log & notify on errors
+# 		closeChainsByVM(v,VM shutdown=0|1):
+# 			get the applicable chains (map vms2chains)
+# 			make sure the chains are active according to C
+#			if VM shutdown = 0:
+#				assume all chains to be "bad"
+#			if VM shutdown = 1:
+#				test the qcrypt status of all chains
+# 			partially close all "bad" chains and update C
+# service stop:
+# 	if [close all] = 0, close all active chains C (indicated to the daemon by different signal)
+# 	the daemon terminates
+
+b_setErrorHandler "loggingDaemonErrorHandler"
+initTraps
+logInfo "Starting..."
+parseConfigFiles "$CONF_TARGET"
+b_dom0_enterEventLoop "onQubesEvent"
+}
+
+#assertValidTarget
+#Assert that the second argument is a valid target.
+#retuns: nothing, but errors out with [B_E](#B_E) for invalid targets
+#@B_E
+function assertValidTarget {
+local target="${B_ARGS[1]}"
+[ -z "$target" ] && target="default"
+getConfigFolder "$target" > /dev/null
+CONF_TARGET="$target"
+}
+
+checkDependencies
+b_args_parse "$@"
+if [ -n "${B_ARGS_OPTS["-v_0"]+exists}" ] ; then
+	DEBUG=0
+	b_daemon_init 1 "" "$B_SCRIPT_DIR/qcryptd.out" "$B_SCRIPT_DIR/qcryptd.err"
+else
+	DEBUG=1
+	b_daemon_init 1
+fi
+
+case "${B_ARGS[0]}" in
+	"start")
+		b_args_assertOptions "-v"
+		[ ${#B_ARGS[@]} -gt 2 ] && usage
+		assertValidTarget
+		b_daemon_start "$DID"
+		;;
+	"stop")
+		b_args_assertOptions "-v" "-c"
+		[ ${#B_ARGS[@]} -gt 1 ] && usage
+		stopC
+		;;
+	"restart")
+		b_args_assertOptions "-v" "-c"
+		[ ${#B_ARGS[@]} -gt 2 ] && usage
+		assertValidTarget
+		stopC
+		b_daemon_start "$DID"
+		;;
+	"check")
+		b_args_assertOptions "-v"
+		[ ${#B_ARGS[@]} -gt 2 ] && usage
+		assertValidTarget
+		checkC
+		;;
+	"chains")
+		b_args_assertOptions "-v" "-nc" "-e"
+		[ ${#B_ARGS[@]} -gt 2 ] && usage
+		assertValidTarget
+		chainsC
+		;;
+	"status")
+		b_args_assertOptions "-v"
+		[ ${#B_ARGS[@]} -gt 1 ] && usage
+		b_daemon_status "$DID"
+		exit $?
+		;;
+	*)
+		usage
+		;;
+esac

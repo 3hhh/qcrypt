@@ -1,0 +1,1169 @@
+#!/bin/bash
+#
+#See usage().
+#
+#Copyright (C) 2019  David Hobach  GPLv3
+#version: 0.8
+#
+#This program is free software: you can redistribute it and/or modify
+#it under the terms of the GNU General Public License as published by
+#the Free Software Foundation, either version 3 of the License, or
+#(at your option) any later version.
+#
+#This program is distributed in the hope that it will be useful,
+#but WITHOUT ANY WARRANTY; without even the implied warranty of
+#MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#GNU General Public License for more details.
+#
+#You should have received a copy of the GNU General Public License
+#along with this program. If not, see <https://www.gnu.org/licenses/>.
+#
+
+#init blib
+source blib || { >&2 echo "This script depends on blib (https://github.com/3hhh/blib). Please install blib first." ; exit 1 ; }
+eval "$B_SCRIPT"
+b_import "args"
+b_import "traps"
+b_import "fs"
+b_import "os/qubes4/dom0"
+
+#distinguish the B_E exit code from the "normal" error
+B_RC=6
+
+QCRYPT_FOLDER="~/.qcrypt"
+QCRYPT_KEYS="$QCRYPT_FOLDER/keys"
+
+#some global arrays required by statusAllC
+declare -a S_CAND
+declare -A S_DATA
+declare -A S_HOPS
+declare -A S_BLOCK
+
+function usage {
+echo "
+Usage: $B_SCRIPT_NAME [options] [command] [source vm] [source file] [key id] [destination vm 1] .. [destination vm n]
+
+Manage files encrypted with multiple encryption layers in Qubes OS dom0. Each layer is supposed to be decrypted inside a dedicated
+destination VM until the final destination/target VM can decrypt to the plaintext. The source VM doesn't decrypt itself.
+
+For most threat models it should suffice to have 1-2 layers of encryption. Each layer of course has a performance impact.
+
+ - 1 layer can make sense if you don't trust your [source vm], but totally trust [destination vm 1]/the target VM to never become compromised.
+ - 2 layers can make sense, if you don't trust [source vm], totally trust [destination vm 1] to only do its encrypting and decrypting job (it
+   should be used exclusively for that) and only have mediocre trust in [destination vm 2]/the target VM. This way attacks starting from the 
+   target VM attempting to leak information by not doing its encryption job properly (e.g. by not encrypting at all) are prevented by
+   [destination vm 1] doing its encryption job properly.
+ - More layers can make sense if you want to trust the middle encryption/decryption VMs less and share your trust among them.
+
+[source vm]		The VM where to find the data to decrypt ([source file]).
+
+[source file]		Full path to the encrypted file inside the [source vm].
+
+[key id]		An identifying string for the keys to use. Each VM must have its own key saved under that identifier.
+			The identifier is the same for all VMs though. Keys are stored locally inside each VM at $QCRYPT_KEYS.
+			The identifier may only consist of numbers and characters.
+			If you lose them, you lose all encrypted data. So better create a backup.
+
+[destination vm 1 .. n]	Layer of VMs to use for decryption in exactly that order. Each VM must have a matching decryption key.
+
+[command] may be one of:
+
+open
+	Map the [source file] in [source vm] to a device, attach it to [destination vm 1], then decrypt it there. Afterwards attach the result
+	to [destination vm 2], decrypt there and so on.
+
+	Options:
+	-a		Autostart all VMs required to be running for this operation (default: error out on stopped VMs).
+	-mp [path]	After all layers of encryptions are decrypted in [vm n], attempt to mount the decrypted data to [path].
+			Otherwise the plaintext device is not mounted.
+	-inj [vm] [key] Inject the given [key] (full path) from dom0 into the [vm] before opening. This can be useful for disposable VMs.
+			The parameter can be specified multiple times. Won't override existing keys.
+	--type [name]	The encryption container to use: plain|luks|loopaes|tcrypt, default: luks.
+	--ro		Attach all involved devices in read-only mode (default: r/w).
+	--noclose	Bypass the initial close. This may be dangerous if you don't know what you're doing.
+
+status
+	Check the online and decryption status of the [source vm], all intermediary VMs and the target VM. A non-zero status code indicates the
+	number of missing steps towards decryption in the target VM.
+
+	Invoking the status command without any other parameters will make $B_SCRIPT_NAME attempt to find all potential encryption chains.
+
+	Options:
+	-mp [path]	Check whether the final device is mounted at the given [path]. If no [path] is specified, check whether it is mounted
+			somewhere.
+
+luksInit
+	Create a new encrypted container in [source vm] as [source file] ([source file] must be a non-existing file path here) and pass the
+	required keys to the intermediary VMs (path: $QCRYPT_KEYS) under the [key id]. Existing keys are never overwritten, but the algorithm
+	will abort further processing. Only [destination vm n] will be able to access the plaintext.
+
+	Currently only luks containers are supported.
+
+	The initial container creation will happen in dom0.
+
+	Options:
+	-a		Autostart all VMs required to be running for this operation (default: error out on stopped VMs).
+	-s [size]	Size to allocate for the container (default: 1G). Supported units: K, M, G, T.
+	-wd [dir] 	Use the given directory in dom0 for all files temporarily created during the init process (default: /tmp/). Its capacity
+			must be larger than the -s parameter. /tmp/ in Qubes OS usually only fits 2G.
+	-k [size]	Size of the keys to deploy in bytes (default: 100).
+	-bak [folder]	Create a backup of all keys in dom0 in the given folder (default: no backup).
+	-fs [type]	Generate the given file system type with mkfs in the decrypted container (default: ext4).
+	-enkey [device]	Block device to use as entropy source for the key generation (default: /dev/random).
+	-encon [device] Block device to use as entropy source for the container initialization (default: /dev/urandom).
+
+	All cryptsetup luksFormat options are supported in their long format as well. They are directly passed to cryptsetup.
+
+close
+	Detach the [source file] from [destination vm n] and all intermediary VMs. Exits with a zero status code if and only if all remnants
+	on all VMs were detached.
+
+	Options:
+	-sd		Shut down any VMs preventing a successful close operation. This can be useful if the close operation fails due to
+			Qubes OS or libxenlight errors.
+	--force		Bypass any checks and attempt to close the given chain. This can for example be used if a previous detach only happened
+			partially or you're very confident that you're doing everything correctly.
+help
+	print this help"
+exit 1
+}
+
+#checkDependencies
+#Checks whether the current bash environment suffices the dependency requirements to run this script.
+#returns: Nothing, but errors out, if the dependencies are not met.
+#@B_E
+function checkDependencies {
+local deps="head
+cryptsetup
+qvm-prefs
+qvm-block
+qvm-shutdown
+qvm-check
+losetup
+df
+mktemp
+mkfs
+chmod
+readlink"
+b_checkDeps "$deps" || { B_ERR="Not all required dependencies to run $B_SCRIPT_NAME are installed." ; B_E }
+
+local vmDeps="cryptsetup
+losetup
+findmnt
+head
+xargs"
+b_dom0_setVMDeps "$vmDeps"
+}
+
+#getSourceDeviceType [source file]
+#Function meant to run in the source VM in order to obtain the source device type.
+#[source file]: as passed to openC
+#returns: exit code of 0 = file & no loop device created, 7 = file, loop device exists, 8 = device, other = error
+function getSourceDeviceType {
+local sourceFile="$1"
+if [ -f "$sourceFile" ] ; then
+	local out=""
+	out="$(losetup -j "$sourceFile")" || exit 9
+	[ -z "$out" ] && exit 0 || exit 7
+elif [ -b "$sourceFile" ] ; then
+	exit 8
+else
+	#error
+	exit 9
+fi
+}
+
+#getKeyPath [vm] [key ID]
+#Obtain the key path from the given key id.
+#returns: key path and sets a non-zero exit code on errors
+#@B_E
+function getKeyPath {
+local vm="$1"
+local keyId="$2"
+local vmUser=""
+vmUser="$(qvm-prefs "$vm" default_user)" || { B_ERR="Failed to retrieve the default user for the VM $vm." ; B_E }
+
+echo "${QCRYPT_KEYS/#~/\/home\/$vmUser}/$keyId"
+}
+
+#parseAndCheckArgs "$@"
+#Parse all arguments of this script, apply some normalisations and do some preliminary option checks.
+#@B_E
+function parseAndCheckArgs {
+#NOTE: in order to support the cryptsetup luksFormat options, we unfortunately need to add them here (the ones that don't make sense with qcrypt and the ones without parameters were left out)
+b_args_init 0 "-mp" 1 "-inj" 2 "--type" 1 "-s" 1 "-wd" 1 "-k" 1 "-bak" 1 "-fs" 1 "-enkey" 1 "-encon" 1 \
+	"--hash" 1 "--cipher" 1 "--key-slot" 1 "--keyfile-offset" 1 "--keyfile-size" 1 "--iter-time" 1 "--header" 1
+b_args_setOptionParamSeparator "<aosep>"
+b_args_parse "$@"
+
+assertCorrectParams
+
+#canonicalize the source file (users may pass e.g. /foo//bar --> /foo/bar however is expected by qcrypt)
+local sourceFile="${B_ARGS[2]}"
+if [ -n "$sourceFile" ] ; then
+	B_ARGS[2]="$(readlink -m "$sourceFile")" || { B_ERR="Failed to canonicalize the source file: $sourceFile" ; B_E }
+fi
+}
+
+#assertCorrectParams
+#Checks whether the command-line parameters are valid and if not, errors out.
+#@B_E
+function assertCorrectParams {
+local cmd="${B_ARGS[0]}"
+
+case "$cmd" in
+	"open")
+		b_args_assertOptions "-a" "-mp" "-inj" "--type" "--ro" "--noclose"
+		;;
+
+	"luksInit")
+		#NOTE: we must also check for the supported luksFormat options here
+		b_args_assertOptions "-a" "-s" "-wd" "-k" "-bak" "-fs" "-enkey" "-encon" \
+			"--hash" "--cipher" "--key-slot" "--keyfile-offset" "--keyfile-size" "--use-random" "--use-urandom" "--iter-time" "--header"
+		;;
+
+	"close")
+		b_args_assertOptions "-sd" "--force"
+		;;
+
+	"status")
+		[ ${#B_ARGS[@]} -eq 1 ] && [ ${#B_ARGS_OPTS[@]} -eq 0 ] && return 0
+		b_args_assertOptions "-mp"
+		;;
+
+	*)
+		usage
+		;;
+esac
+
+[ ${#B_ARGS[@]} -lt 5 ] && usage
+
+local keyId="${B_ARGS[3]}"
+local keyRegex='^[0-9a-zA-Z_\-\+\.]+$'
+[[ "$keyId" =~ $regex ]] || { B_ERR="The given key ID $keyId appears to be invalid." ; B_E }
+
+#ensure all regular arguments are non-empty
+local cnt=1
+local par=
+for par in "${B_ARGS[@]}" ; do
+	[ -z "$par" ] && B_ERR="Found argument #$cnt to be empty." && B_E
+	cnt=$(( $cnt +1 ))
+done
+
+return 0
+}
+
+#see open @usage
+#@B_E
+function openC {
+local mountPoint=""
+local encType="luks"
+local rwFlag=0
+local noClose=1
+local autostart=1
+declare -A injections
+
+#parse params
+[ -n "${B_ARGS_OPTS["-a_0"]+exists}" ] && autostart=0
+[ -n "${B_ARGS_OPTS["-mp_0"]+exists}" ] && mountPoint="${B_ARGS_OPTS["-mp_0"]}"
+[ -n "${B_ARGS_OPTS["--type_0"]+exists}" ] && encType="${B_ARGS_OPTS["--type_0"]}"
+[ -n "${B_ARGS_OPTS["--ro_0"]+exists}" ] && rwFlag=1
+[ -n "${B_ARGS_OPTS["--noclose_0"]+exists}" ] && noClose=0
+local i=0
+local sep="$(b_args_getOptionParamSeparator)"
+while [ -n "${B_ARGS_OPTS["-inj_$i"]+exists}" ] ; do
+	local pars="${B_ARGS_OPTS["-inj_$i"]}"
+	local injTarget="${pars%${sep}*}"
+	local injKey="${pars#*$sep}"
+	injections["$injTarget"]="$injKey"
+	[ -f "$injKey" ] || { B_ERR="No file: $injKey" ; B_E }
+	i=$(($i +1))
+done
+
+local sourceVM="${B_ARGS[1]}"
+local sourceFile="${B_ARGS[2]}"
+local keyId="${B_ARGS[3]}"
+declare -a dsts=("${B_ARGS[@]:4}")
+
+#start all necessary VMs or check that they are running
+[ $autostart -eq 0 ] && b_dom0_ensureRunning "$sourceVM" "${dsts[@]}" "${!injections[@]}" || b_dom0_isRunning "$sourceVM" "${dsts[@]}" "${!injections[@]}"
+
+#close old chains
+if [ $noClose -ne 0 ] ; then
+	b_info "Closing first to make sure we don't run into strange errors..."
+	b_args_parse "--force" "close" "${B_ARGS[@]:1}"
+	closeC
+	#b_args_parse "$@"
+	echo ""
+fi
+#NOTE: the arguments may not be available anymore from B_ARGS & B_ARGS_OPTS here!
+
+#create a source device if needed
+b_info "Preparing the source VM ${sourceVM}..."
+b_silence b_dom0_execFuncIn "$sourceVM" "" getSourceDeviceType "$sourceFile"
+case $? in
+	0)
+		#it is a file --> we need to create a loop device
+		local toCreate="$sourceFile"
+		sourceFile="$(b_dom0_createLoopDeviceIfNecessary "$sourceVM" "$toCreate")" || { B_ERR="Failed to create a loop device for the file $toCreate in the VM $sourceVM." ; B_E }
+		;;
+	7)
+		B_ERR="$sourceFile is already mapped to a loop device inside $sourceVM. Backing off..."
+		B_E
+		;;
+	*)
+		B_ERR="Failed to identify the source device type or the source is in an invalid state. Maybe the file doesn't exist?!"
+		B_E
+esac
+
+#inject keys (if necessary)
+local injTarget=""
+local injKey=""
+local keyPath=""
+for injTarget in "${!injections[@]}" ; do
+	injKey="${injections["$injTarget"]}"
+	keyPath="$(getKeyPath "$injTarget" "$keyId")"
+	echo -n "INFO: Injecting the dom0 key $injKey into the VM $injTarget ($keyPath)... "
+	local ret=2
+	b_setBE 1
+	#NOTE: we never overwrite!
+	b_dom0_copy "$injKey" "$injTarget" "$keyPath" 1 1 2> /dev/null
+	ret=$?
+	b_resetErrorHandler 1
+	if [ $ret -eq 0 ] ; then
+		echo "Done."
+	else
+		if [[ "$B_ERR" == *"blib_dom0_copyPrepareTarget failed"* ]] ; then
+			#ignore errors caused due to existing files
+			B_ERR=""
+			echo "Likely injected before."
+		else
+			echo "Failed."
+			B_E
+		fi
+	fi
+done
+
+#attach & decrypt
+local attachFrom="$sourceVM"
+local attachFromDevice="$sourceFile"
+local mpTo=""
+local mapperName="$keyId"
+local i=
+local lastInd=$(( ${#dsts[@]} -1 ))
+for ((i=0;i<=$lastInd;i++)) ; do
+	local attachTo="${dsts[$i]}"
+	local attachToDevice=""
+
+	[ $i -eq $lastInd ] && mpTo="$mountPoint" || mpTo=""
+
+	b_info "Attaching to ${attachTo}..."
+	attachToDevice="$(b_dom0_crossAttachDevice "$attachFrom" "$attachFromDevice" "$attachTo" "$rwFlag")" || { B_ERR="Failed to attach the device $attachFromDevice from the VM $attachFrom to the VM $attachTo." ; B_E }
+	keyPath="$(getKeyPath "$attachTo" "$keyId")" || { B_ERR="Failed to retrieve the key file path inside the VM $attachTo for the key ID $keyId." ; B_E }
+	#NOTE: we use the key ID as device mapper name
+	b_info "Decrypting inside ${attachTo}..."
+	b_dom0_openCrypt "$attachTo" "$attachToDevice" "$mapperName" "$rwFlag" "$mpTo" "$keyPath" "$encType" || { B_ERR="Failed to decrypt the device $attachToDevice inside the VM $attachTo using the key file $keyPath." ; B_E }
+
+	#special case: last run
+	if [ $i -eq $lastInd ] ; then
+		[ -n "$mpTo" ] && b_info "Mounted the decrypted data to: $mpTo"
+	else
+		#update vars
+		#NOTE: unfortunately /dev/mapper/xyz is a symlink to /dev/dm-[0-9]+ and Qubes only accepts the latter to identify the backend --> we need to find that name from qvm-block
+		#example for /dev/mapper/foo:
+		#testing-vm:dm-2    foo
+		local qvmBlockInfo=""
+		qvmBlockInfo="$(b_dom0_parseQvmBlock "map")" || { B_ERR="Failed to parse qvm-block ls." ; B_E }
+		attachFromDevice="$(b_dom0_getQvmBlockInfo "$qvmBlockInfo" "device id" "backend" "$attachTo" "description" "$mapperName" "frontend-dev" "")" || { B_ERR="Failed to find the correct backend device ID for the mapper $mapperName inside the VM $attachTo." ; B_E }
+		attachFrom="$attachTo"
+	fi
+done
+
+b_info "Open done."
+return 0
+}
+
+#ensureFileDoesNotExistIn [vm] [file]
+#Makes sure the given file doesn't exist in the given VM and errors out otherwise.
+#@B_E
+function ensureFileDoesNotExistIn {
+local vm="$1"
+local file="$2"
+local fileEsc=""
+printf -v fileEsc '%q' "$file"
+
+local cmd="[ -e $fileEsc ] && exit 5 || exit 0"
+local ret=-1
+b_silence b_dom0_qvmRun "$vm" "$cmd"
+ret=$?
+[ $ret -eq 5 ] && B_ERR="There already appears to exist a file named $file in the VM $vm. Will not overwrite." && B_E
+[ $ret -ne 0 ] && B_ERR="Failed to execute a command in the VM $vm." && B_E
+return 0
+}
+
+#checkAvailableSpace [directory] [required space (bytes)]
+#Check whether the given directory provides enough space.
+#returns: A zero exit code, if enough space is available and a non-zero exit code otherwise.
+#@B_E
+function checkAvailableSpace {
+local dir="$1"
+local req="$2"
+local avail=""
+
+avail="$(df -B1 --output=avail "$dir")" || { B_ERR="Failed to run df on the directory $dir." ; B_E }
+
+local line=
+while IFS= read -r line ; do
+	[[ "$line" =~ ^([0-9]+) ]] && avail="${BASH_REMATCH[1]}" && break
+done <<< "$avail"
+
+[ $avail -gt $req ]
+}
+
+#see create @usage
+#@B_E
+function luksInitC {
+local parSepSeen=1
+local cryptsetupParams=""
+local size=1073741824
+local keySize=100
+local enKey="/dev/random"
+local enCon="/dev/urandom"
+local keyBackupFolder=""
+local fsType="ext4"
+local workingDir="/tmp"
+local autostart=1
+
+#parse params
+[ -n "${B_ARGS_OPTS["-a_0"]+exists}" ] && autostart=0
+if [ -n "${B_ARGS_OPTS["-s_0"]+exists}" ] ; then
+	size="$(b_fs_parseSize "${B_ARGS_OPTS["-s_0"]}")" || { B_ERR="Failed to parse the -s parameter: $2" ; B_E }
+fi
+if [ -n "${B_ARGS_OPTS["-wd_0"]+exists}" ] ; then
+	workingDir="${B_ARGS_OPTS["-wd_0"]}"
+	mkdir -p "$workingDir" || { B_ERR="Failed to create $workingDir." ; B_E }
+	[ -d "$workingDir" ] || { B_ERR="No directory: $workingDir" ; B_E }
+fi
+[ -n "${B_ARGS_OPTS["-k_0"]+exists}" ] && keySize="${B_ARGS_OPTS["-k_0"]}"
+if [ -n "${B_ARGS_OPTS["-enkey_0"]+exists}" ] ; then
+	enKey="${B_ARGS_OPTS["-enkey_0"]}"
+	[ -c "$enKey" ] || { B_ERR="No valid entropy source: $enKey" ; B_E }
+fi
+if [ -n "${B_ARGS_OPTS["-encon_0"]+exists}" ] ; then
+	enCon="${B_ARGS_OPTS["-encon_0"]}"
+	[ -c "$enCon" ] || { B_ERR="No valid entropy source: $enCon" ; B_E }
+fi
+if [ -n "${B_ARGS_OPTS["-bak_0"]+exists}" ] ; then
+	keyBackupFolder="${B_ARGS_OPTS["-bak_0"]}"
+	mkdir -p "$keyBackupFolder" || { B_ERR="Failed to create $keyBackupFolder." ; B_E }
+	[ -d "$keyBackupFolder" ] || { B_ERR="No directory: $keyBackupFolder" ; B_E }
+fi
+[ -n "${B_ARGS_OPTS["-fs_0"]+exists}" ] && fsType="${B_ARGS_OPTS["-fs_0"]}"
+
+#the remaining options are cryptsetup parameters
+local rem="$(b_setErrorHandler "b_defaultErrorHandler 1 1 1" ;
+	b_args_assertOptions "-a" "-s" "-wd" "-k" "-bak" "-fs" "-enkey" "-encon" ;
+	echo "$B_ERR")"
+local opt=
+local firstLine=0
+while IFS= read -r opt ; do
+	[ $firstLine -eq 0 ] && firstLine=1 && continue
+	[ -z "$opt" ] && continue
+	printf -v cryptsetupParams "%s %q" "$cryptsetupParams" "$opt"
+	local par="${B_ARGS_OPTS["${opt}_0"]}"
+	#NOTE: all cryptsetup options only have at most one parameter at the moment - if that changes, the below code needs to change
+	[ -n "$par" ] && printf -v cryptsetupParams "%s %q" "$cryptsetupParams" "$par"
+done <<< "$rem"
+
+local sourceVM="${B_ARGS[1]}"
+local sourceFile="${B_ARGS[2]}"
+local keyId="${B_ARGS[3]}"
+declare -a dsts=("${B_ARGS[@]:4}")
+
+#safety checks
+b_info "Doing some safety checks..."
+# a. we need to be root in dom0
+b_enforceUser "root"
+# b. we need to have enough space in dom0
+checkAvailableSpace "$workingDir" "$size" || { B_ERR="$workingDir provides less space than required by the -s parameter." ; B_E }
+# c. all necessary VMs must run
+[ $autostart -eq 0 ] && b_dom0_ensureRunning "$sourceVM" "$@" || b_dom0_isRunning "$sourceVM" "$@"
+# d. make sure the source VM doesn't already have a file named $sourceFile
+ensureFileDoesNotExistIn "$sourceVM" "$sourceFile"
+# e. make sure the key ID is not used in any of the destination VMs
+local dst=""
+local vmKeyPath=""
+declare -A vmKeyPaths
+for dst in "${dsts[@]}" ; do
+	vmKeyPath="$(getKeyPath "$dst" "$keyId")" || { B_ERR="Failed to retrieve the key file path inside the VM $dst for the key ID $keyId." ; B_E }
+	vmKeyPaths["$dst"]="$vmKeyPath"
+	ensureFileDoesNotExistIn "$dst" "$vmKeyPath"
+done
+
+#init container
+local dom0Container=""
+dom0Container="$(mktemp -p "$workingDir")" || { B_ERR="Failed to create a temporary file." ; B_E }
+b_traps_add "rm -f \"$dom0Container\"" EXIT || { B_ERR="Failed to register a cleanup trap." ; B_E }
+b_info "Initializing the luks container (this may take a while)..."
+head -c $size < "$enCon" > "$dom0Container" || { B_ERR="Failed to initialize the container at $dom0Container." ; B_E }
+
+#create a loop device for the container
+local dom0ContainerLoop=""
+dom0ContainerLoop="$(losetup -f --show "$dom0Container")" || { B_ERR="Failed to create a loop device." ; B_E }
+b_traps_prepend "losetup -d \"$dom0ContainerLoop\"" EXIT || { B_ERR="Failed to register a cleanup trap." ; B_E }
+
+#generate key files & add encryption layers
+local dom0KeyFile=""
+declare -A dom0KeyFiles
+local curDevice="$dom0ContainerLoop"
+for dst in "${dsts[@]}" ; do
+	#generate key
+	b_info "Generating the key for the VM ${dst}..."
+	dom0KeyFile="$(mktemp -p "$workingDir")" || { B_ERR="Failed to create a temporary file." ; B_E }
+	b_traps_add "rm -f \"$dom0KeyFile\"" EXIT || { B_ERR="Failed to register a cleanup trap." ; B_E }
+	head -c "$keySize" < "$enKey" > "$dom0KeyFile" || { B_ERR="Failed to initialize the key for the VM $dst at $dom0KeyFile." ; B_E }
+	dom0KeyFiles["$dst"]="$dom0KeyFile"
+
+	#format
+	b_info "Generating the encryption layer for the VM ${dst}..."
+	cryptsetup -q --key-file "$dom0KeyFile" $cryptsetupParams luksFormat "$curDevice" || { B_ERR="Failed to run cryptsetup luksFormat." ; B_E }
+
+	#open the newly created layer
+	b_info "Switching to the next encryption layer..."
+	local luksName="$dst-$keyId"
+	cryptsetup open --type luks --key-file "$dom0KeyFile" "$curDevice" "$luksName" || { B_ERR="Failed to open the encryption layer created for the VM $dst." ; B_E }
+	b_traps_prepend "cryptsetup close \"$luksName\"" EXIT || { B_ERR="Failed to register a cleanup trap." ; B_E }
+	curDevice="/dev/mapper/$luksName"
+done
+
+#optional: generate file system
+if [ -n "$fsType" ] ; then
+	b_info "Creating the file system..."
+	mkfs -t "$fsType" "$curDevice" &> /dev/null || { B_ERR="Failed to create the file system of type $fsType on $curDevice." ; B_E }
+fi
+
+#optional: create a backup of the keys in dom0
+#NOTE: if this fails, we don't need to pass all the stuff to the VMs
+if [ -n "$keyBackupFolder" ] ; then
+	b_info "Backing up all keys to $keyBackupFolder..."
+
+	for dst in "${dsts[@]}" ; do
+		dom0KeyFile="${dom0KeyFiles["$dst"]}"
+		local bakFile="$keyBackupFolder/${dst}_$keyId"
+		[ -e "$bakFile" ] && B_ERR="A file called $bakFile already exists. Rejecting to overwrite." && B_E
+		cp "$dom0KeyFile" "$bakFile" || { B_ERR="Failed to copy the key file $dom0KeyFile to $bakFile." ; B_E }
+		chmod 666 "$bakFile"
+	done
+fi
+
+#pass the keys to the VMs
+for dst in "${dsts[@]}" ; do
+	dom0KeyFile="${dom0KeyFiles["$dst"]}"
+	vmKeyPath="${vmKeyPaths["$dst"]}"
+	b_info "Passing the key $dom0KeyFile to the VM $dst as $vmKeyPath..."
+	b_dom0_copy "$dom0KeyFile" "$dst" "$vmKeyPath" 1 1 || { B_ERR="Failed to copy the key file $dom0KeyFile." ; B_E }
+done
+
+#pass the container to the source VM
+b_info "Copying the encrypted container to the VM $sourceVM at ${sourceFile}..."
+b_dom0_copy "$dom0Container" "$sourceVM" "$sourceFile" 1 1 || { B_ERR="Failed to copy the encrypted container to the source VM $sourceVM." ; B_E }
+
+b_info "Luks init done."
+b_info "Cleaning up... (this is not hanging)"
+return 0
+}
+
+#closeDecryptedData [mapper name]
+#Closes the given luks container inside a target VM.
+#[mapper name]: Name of the device mapper to close.
+#returns: 11, if the device mapper did not exist (wasn't open), 22 on cryptsetup errors during closing
+function closeDecryptedData {
+local mapperName="$1"
+local mapperNameEsc=""
+printf -v mapperNameEsc '%q' "$mapperName"
+
+! [ -b /dev/mapper/$mapperNameEsc ] && exit 11
+
+cryptsetup close $mapperNameEsc || exit 22
+exit 0
+}
+
+#see close @usage
+#@B_E
+function closeC {
+local shutdown=1
+local force=1
+
+#parse params
+[ -n "${B_ARGS_OPTS["-sd_0"]+exists}" ] && shutdown=0
+[ -n "${B_ARGS_OPTS["--force_0"]+exists}" ] && force=0
+
+local sourceVM="${B_ARGS[1]}"
+local sourceFile="${B_ARGS[2]}"
+local keyId="${B_ARGS[3]}"
+declare -a dsts=("${B_ARGS[@]:4}")
+
+#make sure the given chain is valid by checking its status
+#NOTE: we also check that the chain is mounted as it might otherwise be incomplete (missing target VM) and we don't want a partial closure
+if [ $force -ne 0 ] ; then
+	echo -n "INFO: Checking the validity of the chain... "
+	local state=""
+	b_args_parse "status" "$sourceVM" "$sourceFile" "$keyId" "${dsts[@]}"
+	state="$(statusSingleC)" || { B_ERR="The chain has a bad status - check it below. If you want to continue nonetheless, use --force."$'\n'"$state" ; B_E }
+	echo "Done. All good."
+fi
+#NOTE: the arguments may not be available anymore from B_ARGS & B_ARGS_OPTS here!
+
+#NOTE: we use the key ID as luks mapper name
+local mapperName="$keyId"
+local mapperNameEsc=""
+printf -v mapperNameEsc '%q' "$mapperName"
+
+#attempt umount in the final destination VM
+local err=""
+local dst="${dsts[@]: -1}"
+local ret=-1
+echo -n "INFO: Umounting the plaintext device inside ${dst}... "
+local cmd="findmnt -n -o TARGET -S /dev/mapper/$mapperNameEsc | head -n1 | xargs umount -A -R || exit 17"
+b_setBE 1
+b_dom0_qvmRun "$dst" "$cmd" &> /dev/null
+ret=$?
+b_resetErrorHandler
+if [ $ret -eq 17 ] ; then
+	echo "Was not mounted. All good."
+elif [ $ret -eq 0 ] ; then
+	echo "Done."
+else
+	err="Failed to umount."
+	[ $force -eq 0 ] && echo "$err Proceeding anyway..." || { B_ERR="$err No point in proceeding." ; B_E }
+fi
+
+#cryptsetup close & detach afterwards in all VMs (if necessary)
+local qvmBlockInfo=""
+qvmBlockInfo="$(b_dom0_parseQvmBlock "map")" || { B_ERR="Failed to parse qvm-block ls." ; B_E }
+local i=
+local desc=
+for ((i=${#dsts[@]}-1;i >= 0;i--)) ; do
+	local vm="${dsts[$i]}"
+
+	#close
+	echo -n "INFO: Closing the dm-crypt device inside ${vm}... "
+	b_setBE 1
+	b_dom0_execFuncIn "$vm" "" "closeDecryptedData" "$mapperName" &> /dev/null
+	ret=$?
+	b_resetErrorHandler
+	case $ret in
+		0)
+			echo "Done."
+			;;
+		11)
+			echo "Was not open. All good."
+			;;
+		*)
+			err="Failed to close the dm-crypt device (status: $ret)."
+			[ $force -eq 0 ] && echo "$err Proceeding anyway..." || { B_ERR="$err No point in proceeding." ; B_E }
+	esac
+
+	#detach
+	#example qvm-block ls output:
+	#result of `qcrypt open -- disp287 /tmp/foo4 foo4 testing-pers d-testing`
+	#BACKEND:DEVID        DESCRIPTION  USED BY
+	#disp287:loop0        /tmp/foo4    testing-pers (read-only=no, frontend-dev=xvdi)
+	#testing-pers:dm-0    foo4         d-testing (read-only=no, frontend-dev=xvdi)
+	#foo4 is the /dev/mapper/foo4 name inside testing-pers providing a symlink to /dev/dm-0 and used by d-testing as /dev/xvdi
+	#--> we'd have to detach:
+	#	qvm-block d d-testing testing-pers:dm-0
+	#	qvm-block d testing-pers disp287:loop0
+	#--> resulting in an empty "used by" column
+	[ $i -eq 0 ] && desc="$sourceFile" || desc="$mapperName"
+	echo -n "INFO: Detaching the device from the VM $vm... "
+	local backend=""
+	backend="$(b_dom0_getQvmBlockInfo "$qvmBlockInfo" "id" "description" "$desc" "used by" "$vm")"
+	[ $? -eq $B_RC ] && { B_ERR="Failed to parse qvm-block ls." ; B_E }
+	if [ -z "$backend" ] ; then
+		echo "Was not attached. All good."
+	else
+		qvm-block d "$vm" "$backend" &> /dev/null
+		if [ $? -eq 0 ] ; then
+			echo "Done."
+		else
+			if [ $shutdown -eq 0 ] ; then
+				echo -n "Failed, trying to shutdown... "
+				qvm-shutdown --wait --timeout 30 "$vm"
+				qvm-check --running "$vm" &> /dev/null && B_ERR="Failed to shutdown the VM $vm." && B_E
+				echo "Done."
+			else
+				err="Failed to detach the backend $backend from the VM $vm. No point in proceeding."
+				[ $force -eq 0 ] && echo "$err Proceeding anyway..." || { B_ERR="$err No point in proceeding." ; B_E }
+			fi
+		fi
+	fi
+done
+
+#remove the loop device inside the source VM
+echo -n "INFO: Closing the loop device inside $sourceVM... "
+b_setBE 1
+b_dom0_execFuncIn "$sourceVM" "" "detachLoop" "$sourceFile" &> /dev/null
+ret=$?
+b_resetErrorHandler
+if [ $ret -eq 17 ] ; then
+	echo "No loop device found. All good."
+elif [ $ret -eq 0 ] ; then
+	echo "Done."
+else
+	#last action, no need for force
+	B_ERR="Failed to close."
+	B_E
+fi
+
+b_info "Close done."
+[ -z "$err" ]
+}
+
+#detachLoop [file]
+#Detach the loop device associated with the given file, if it exists.
+#returns: an exit code of 17, if it doesn't exist; an exit code of 0 on success and a non-zero exit code on failure
+function detachLoop {
+local filePath="$1"
+local found="$(losetup -n -O NAME -j "$filePath")"
+if [ -z "$found" ] ; then
+	exit 17
+else
+	losetup -d "$found"
+fi
+}
+
+#getVMStatus [key path] [mapper name] [device name] [mount path]
+#Get the encryption state for the VM this function is running in.
+#[device name]: Name of the _encrypted_ attached device; may be empty, if no device is attached.
+#returns: 0 = key is available & device decrypted & mounted at the mount path (or somewhere, if not specified), 1 = key is available & device decrypted & not mounted, 2 = key available & device not decrypted, 3 = key unavailable & device not decrypted, 9 = other error
+function getVMStatus {
+local keyPath="$1"
+local mapperName="$2"
+local mapperPath="/dev/mapper/$mapperName"
+local devName="$3"
+local mp="$4"
+local mpList=""
+
+local keyAvailable=-1
+[ -f "$keyPath" ] && keyAvailable=0 || keyAvailable=1
+
+#special case: no device
+[ -z "$devName" ] && return $(( $keyAvailable +2  ))
+
+local cryptAvailable=-1
+cryptsetup status "$mapperName" &> /dev/null && cryptAvailable=0 || cryptAvailable=1
+
+if [ $keyAvailable -eq 0 ] ; then
+	if [ $cryptAvailable -eq 0 ] ; then
+
+		mpList="$(findmnt -l -o TARGET -n -S "$mapperPath")" || return 1
+		if [ -z "$mp" ] ; then
+			return 0
+		else
+			b_listContains "$mpList" "$mp" && return 0 || return 1
+		fi
+	else
+		return 2
+	fi
+else
+	if [ $cryptAvailable -eq 0 ] ; then
+		return 9
+	else
+		return 3
+	fi
+fi
+}
+
+#see status @usage
+#@B_E
+function statusSingleC {
+local mountPoint=""
+
+#parse params
+[ -n "${B_ARGS_OPTS["-mp_0"]+exists}" ] && mountPoint="${B_ARGS_OPTS["-mp_0"]}"
+
+local sourceVM="${B_ARGS[1]}"
+local sourceFile="${B_ARGS[2]}"
+local keyId="${B_ARGS[3]}"
+declare -a dsts=("${B_ARGS[@]:4}")
+
+#target format:
+#sourceVM
+# 	running:        y/n
+#	source:         block device|file, loop device|file, no loop device created|unknown, [reason]
+#dst vm x 	
+#	running:        y/n
+#	dev attached:   y/n (device path) (from qvm-block ls)
+#	key available:  y/n (file path) (file exists)
+#	dev decrypted:  y/n (cryptsetup status)
+#final vm
+#	[same as dst vm x and the below:]
+#	dev mounted:    y/n (findmnt)
+
+echo ""
+local stat=""
+local runningStat=""
+local ret=0
+local statusFormat="%20s:  %-10s\n"
+
+#source VM status
+#NOTE: we use qvm-check over b_dom0_isRunning as the first doesn't error out and is less expensive
+echo " $sourceVM"
+if qvm-check --running "$sourceVM" &> /dev/null ; then
+       	runningStat="yes"
+
+	b_silence b_dom0_execFuncIn "$sourceVM" "" "getSourceDeviceType" "$sourceFile"
+	case $? in
+		0)
+			stat="file, no loop device created"
+			((++ret))
+			;;
+		7)
+			stat="file, loop device"
+			;;
+		8)
+			#shouldn't happen
+			stat="block device"
+			;;
+		*)
+			stat="unknown, not available?"
+			ret=$(( $ret +2 ))
+	esac
+else
+	runningStat="no"
+	stat="unknown, VM down"
+	ret=$(( $ret +3 ))
+fi
+printf "$statusFormat" "running" "$runningStat"
+printf "$statusFormat" "source" "$stat"
+
+#destination VMs
+local dst=
+local keyPath=""
+local devName=""
+local lastVM="$sourceVM"
+local lastDescription="$sourceFile"
+local qvmBlockInfo=""
+local lastUsedBy=""
+local target="${dsts[@]: -1}"
+qvmBlockInfo="$(b_dom0_parseQvmBlock "map")" || { B_ERR="Failed to parse qvm-block ls." ; B_E }
+for dst in "${dsts[@]}" ; do
+	echo ""
+
+	#running?
+	echo " $dst"
+	if qvm-check --running "$dst" &> /dev/null ; then
+		printf "$statusFormat" "running" "yes"
+	else
+		printf "$statusFormat" "running" "no"
+		printf "$statusFormat" "device attached" "no (not running)"
+		printf "$statusFormat" "key available" "no (not running)"
+		printf "$statusFormat" "device decrypted" "no (not running)"
+		statMounted="no (not running)"
+		ret=$(( $ret +4 ))
+		continue
+	fi
+
+	#some needed parameters
+	keyPath="$(getKeyPath "$dst" "$keyId")" || { B_ERR="Failed to retrieve the key path for the VM $dst." ; B_E }
+	#example qvm-block ls output:
+	#result of `qcrypt open -- disp287 /tmp/foo4 foo4 testing-pers d-testing`
+	#BACKEND:DEVID        DESCRIPTION  USED BY
+	#disp287:loop0        /tmp/foo4    testing-pers (read-only=no, frontend-dev=xvdi)
+	#testing-pers:dm-0    foo4         d-testing (read-only=no, frontend-dev=xvdi)
+	#d-testing:dm-0       foo4		<--- line sometimes missing!
+	#foo4 is the /dev/mapper/foo4 name inside testing-pers providing a symlink to /dev/dm-0 and used by d-testing as /dev/xvdi
+	#NOTE @devName:
+	# - the description in Qubes OS is the name of the device mapper (and the device for the sourceVM) --> we know that the mapper is the keyId by convention, i.e. we can search for that
+	# - we need to find the frontend-dev with a backend equal to the last VM
+	devName="$(b_dom0_getQvmBlockInfo "$qvmBlockInfo" "frontend-dev" "backend" "$lastVM" "description" "$lastDescription")"
+	[ $? -eq $B_RC ] && { B_ERR="Failed to parse qvm-block ls." ; B_E }
+
+	#make sure the chain makes sense / ignore non-matching devices
+	lastUsedBy="$(b_dom0_getQvmBlockInfo "$qvmBlockInfo" "used by" "backend" "$lastVM" "description" "$lastDescription")"
+	[ $? -eq $B_RC ] && { B_ERR="Failed to parse qvm-block ls." ; B_E }
+	[[ "$dst" != "$lastUsedBy" ]] && devName=""
+	
+	#device attached?
+	[ -n "$devName" ] && stat="yes" || { stat="no" ; ((++ret)) ; }
+	printf "$statusFormat" "device attached" "$stat"
+
+	#key available, device decrypted, mounted?
+	local tRet=
+	b_silence b_dom0_execFuncIn "$dst" "" getVMStatus "$keyPath" "$keyId" "$devName" "$mountPoint"
+	tRet=$?
+	local statDev=""
+	local statMounted="no"
+	case $tRet in
+	0)
+		stat="yes"
+		statDev="yes"
+		statMounted="yes"
+		;;
+	1)
+		stat="yes"
+		statDev="yes"
+		;;
+	2)
+		stat="yes"
+		statDev="no"
+		((++ret))
+		;;
+	3)
+		stat="no"
+		statDev="no"
+		ret=$(( $ret +2 ))
+		;;
+	*)
+		B_ERR="The VM $dst returned a strange status for itself. Maybe it is not managed by qcrypt? You might have to investigate."
+		B_E
+	esac
+	printf "$statusFormat" "key available" "$stat"
+	printf "$statusFormat" "device decrypted" "$statDev"
+
+	#update for next iteration
+	lastVM="$dst"
+	lastDescription="$keyId"
+done
+
+#dev mounted on final VM?
+[[ "$statMounted" != "yes" ]] && ((++ret))
+printf "$statusFormat" "device mounted" "$statMounted"
+
+#make sure the target is not used by anything (otherwise it would be an invalid target)
+#NOTE: if nothing is attached/mounted/whatever, this check will also succeed
+lastUsedBy="$(b_dom0_getQvmBlockInfo "$qvmBlockInfo" "used by" "backend" "$target" "description" "$keyId")"
+[ $? -eq $B_RC ] && { B_ERR="Failed to parse qvm-block ls." ; B_E }
+[ -n "$lastUsedBy" ] && B_ERR="The target VM $target appears to be used by $lastUsedBy as part of a chain. Is the chain incomplete?" && B_E
+
+#set exit code
+exit $ret
+}
+
+#statusAllFindNextHop [candidate id] [expected description]
+#Find the next "used by" hop matching the criteria of the GEN_PATHS algorithm in step 1b. Save its ID under [candidate ID]_next[DESCRIPTION of next hop] inside S_DATA.
+#[candidate id]: BACKEND:DEVID of the candidate
+#[expected description]: description to check against; if none is specified, all are fine
+#returns: 0, if a valid candidate chain was found and a non-zero exit code otherwise
+function statusAllFindNextHop {
+local cand="$1"
+[ -z "$cand" ] && return 1
+local expectedDesc="$2"
+local candUsedBy="${S_DATA["${cand}_used by"]}"
+local candDesc="${S_DATA["${cand}_description"]}"
+local found=0
+local i=
+
+#find all next hop candidates
+#maybe TODO: improve performance by replacing the loop search with a data structure (back reference or sth similar)
+for ((i=0; i < ${S_BLOCK["max"]}; i++)) ; do
+	local cur="${S_BLOCK["${i}_id"]}"
+	local curBackend="${S_BLOCK["${i}_backend"]}"
+	local curDesc="${S_BLOCK["${i}_description"]}"
+
+	if [ -n "$curDesc" ] && [[ "$curBackend" == "$candUsedBy" ]] && [[ "${S_BLOCK["${i}_device id"]}" =~ ^dm\-[0-9]+$ ]] ; then
+		[ -n "$expectedDesc" ] && [[ "$curDesc" != "$expectedDesc" ]] && continue
+		
+		#next hop found
+		#NOTE: we may find multiple for the first hop!
+		found=$(( $found +1 ))	
+		S_HOPS["${cand}_next_$found"]="$cur"
+		local curUsedBy="${S_DATA["${cur}_used by"]}"
+
+		#find further hops starting from there
+		[ -n "$curUsedBy" ] && statusAllFindNextHop "$cur" "$curDesc"
+	fi
+done
+
+#set exit code
+[ $found -ne 0 ]
+}
+
+#statusAllPrint [last hop] [previous hop string] [previous status string]
+#Generates the print output for statusAll.
+#[last hop]: The hop from which to start.
+#[previous hop string]: Output generated from previous recursions.
+#[previous status string]: Output generated from previous recursions.
+#returns: Nothing.
+function statusAllPrint {
+local lastHop="$1"
+local prevHopString="$2"
+local prevStatString="$3"
+
+#there can only be a single next hop or none --> find it
+local i=1
+local nextHop=""
+while : ; do
+	#NOTE: we need to check for existence as some hops may have been pruned using ""
+	if [ -n "${S_HOPS["${lastHop}_next_$i"]+exists}" ] ; then
+		nextHop="${S_HOPS["${lastHop}_next_$i"]}"
+		[ -n "$nextHop" ] && break
+	else
+		break
+	fi
+	i=$(( $i +1 ))
+done
+
+#update print strings
+if [ -z "$prevHopString" ] ; then
+	prevHopString="$lastHop"
+	local key="${S_DATA["${nextHop}_description"]}"
+	[ -z "$key" ] && key="UNKNOWN-KEY" #maybe TODO: retrieve the correct key from the mapper name of any destination VM (risk: VM --> dom0 data flow)
+	printf -v prevStatString 'qcrypt status -- %q %q %q' "${S_DATA["${lastHop}_backend"]}" "${S_DATA["${lastHop}_description"]}" "$key"
+else
+	prevHopString="$prevHopString --> $lastHop"
+	printf -v prevStatString '%s %q' "$prevStatString" "${S_DATA["${lastHop}_backend"]}"
+fi
+
+#we are the last hop
+if [ -z "$nextHop" ] ; then
+	#special case: the last hop might actually be used by someone (without any further reference in S_HOPS) and if so, we need to add that VM as "real" last hop
+	local usedBy="${S_DATA["${lastHop}_used by"]}"
+		if [ -n "$usedBy" ] ; then
+			#NOTE: we simply use the frontend-dev in that case to avoid another call to the VM
+			prevHopString="$prevHopString --> $usedBy:${S_DATA["${lastHop}_frontend-dev"]}"
+			printf -v prevStatString "%s %q" "$prevStatString" "$usedBy"
+		fi
+	
+	local ro="${S_DATA["${lastHop}_read-only"]}"
+	[[ "$ro" == "yes" ]] && ro="r/o" || ro="r/w"
+
+	#print
+	echo "$prevHopString ($ro)"
+	echo "$prevStatString"
+	echo ""
+	return 0
+else
+	#find next hops
+	statusAllPrint "$nextHop" "$prevHopString" "$prevStatString"
+fi
+}
+
+#cryptoDeviceMatches [encrypted device] [decrypted device]
+#Check whether the given encrypted device corresponds to the given decrypted device.
+#[encrypted device]: Name of the encrypted luks device without /dev/.
+#[decrypted device]: Name of the decrypted luks device without /dev/, e.g. dm-3.
+#returns: 0 if and only if the devices match and no error occurred.
+function cryptoDeviceMatches {
+local encrypted="/dev/$1"
+local decrypted="/dev/$2"
+local out=
+out="$(cryptsetup status "$decrypted" 2> /dev/null)" || return 1
+
+local line=
+while IFS= read -r line ; do
+	[[ "$line" =~ ^[[:space:]]*device:[[:space:]]*$encrypted[[:space:]]*$ ]] && return 0
+done <<< "$out"
+
+return 2
+}
+
+#see status @usage
+#@B_E
+function statusAllC {
+local qvmBlockInfo=""
+qvmBlockInfo="$(b_dom0_parseQvmBlock "S_BLOCK")" || { B_ERR="Failed to parse qvm-block ls." ; B_E }
+qvmBlockInfo="${qvmBlockInfo/declare -A/declare -gA}"
+eval "$qvmBlockInfo" || { B_ERR="b_dom0_parseQvmBlock output incorrect." ; B_E }
+
+#example qvm-block ls output:
+#result of `qcrypt open -- disp287 /tmp/foo4 foo4 testing-pers d-testing`
+#BACKEND:DEVID        DESCRIPTION  USED BY
+#disp287:loop0        /tmp/foo4    testing-pers (read-only=no, frontend-dev=xvdi)
+#testing-pers:dm-0    foo4         d-testing (read-only=no, frontend-dev=xvdi)
+#d-testing:dm-0       foo4		<--- line sometimes missing!
+#foo4 is the /dev/mapper/foo4 name inside testing-pers providing a symlink to /dev/dm-0 and used by d-testing as /dev/xvdi
+#--> rough algorithm GEN_PATHS (forward search):
+# 1. For all BACKEND:DEVIDs with DEVID not matching ^dm\-[0-9]+$ and non-empty USED BY:
+#  a. Check whether their USED BY leads to a VM with a DEVID matching ^dm\-[0-9]+$ and has a non-empty DESCRIPTION. Save those candidates.
+#  b. Repeat a. (recurse?) for all the saved candidates until no further link is available. The resulting chains are saved as candidate chains.
+# 2. Prune all candidate chains where the descriptions apart from the first VM are not identical or check that as part of 1.b.
+# 3. Prune candidates: Inside the first intermediary VM get the encrypted device corresponding to the dm-X container (Warning: untrusted input coming from the VM). Prune, if that doesn't match the frontend-device of the source VM of that candidate chain.
+
+#find potential start points
+#ideas:
+# - save all start points inside S_CAND
+# - save all required VM data inside S_DATA
+# - save hop data inside S_HOPS; this should make further traversal rather simple
+local id=
+local i=
+for ((i=0; i < ${S_BLOCK["max"]}; i++)) ; do
+	id="${S_BLOCK["${i}_id"]}"
+
+	#create the data array
+	S_DATA["${id}_backend"]="${S_BLOCK["${i}_backend"]}"
+	S_DATA["${id}_device id"]="${S_BLOCK["${i}_device id"]}"
+	S_DATA["${id}_description"]="${S_BLOCK["${i}_description"]}"
+	S_DATA["${id}_used by"]="${S_BLOCK["${i}_used by"]}"
+	S_DATA["${id}_frontend-dev"]="${S_BLOCK["${i}_frontend-dev"]}"
+	S_DATA["${id}_read-only"]="${S_BLOCK["${i}_read-only"]}"
+
+	#save candidates
+	if [ -n "${S_BLOCK["${i}_used by"]}" ] && [ -n "${S_BLOCK["${i}_frontend-dev"]}" ] && [[ ! "${S_BLOCK["${i}_device id"]}" =~ ^dm\-[0-9]+$ ]] ; then
+		S_CAND+=("$id")
+	fi
+done
+
+#find all available next hops
+local cand=
+for cand in "${S_CAND[@]}" ; do
+	statusAllFindNextHop "$cand"
+done
+
+#prune according to 3.
+local nextHop=
+local nextHopCrypt=
+for cand in "${S_CAND[@]}" ; do
+	local j=1
+	local candFrontend="${S_DATA["${cand}_frontend-dev"]}"
+	[ -z "$candFrontend" ] && B_ERR="No frontend device found for $cand. Programming error?!" && B_E
+
+	while : ; do
+		if [ -n "${S_HOPS["${cand}_next_$j"]+exists}" ] ; then
+			nextHop="${S_HOPS["${cand}_next_$j"]}"
+			nextHopCrypt="${S_DATA["${nextHop}_device id"]}"
+			#NOTE: we do not retrieve data to dom0 for security reasons (except for the status code)
+			if ! b_silence b_dom0_execFuncIn "${S_DATA["${nextHop}_backend"]}" "" "cryptoDeviceMatches" "$candFrontend" "$nextHopCrypt" ; then
+				S_HOPS["${cand}_next_$j"]=""
+			fi
+		else
+			break
+		fi
+
+		j=$(( $j +1 ))
+	done
+done
+
+#print chains
+for cand in "${S_CAND[@]}" ; do
+	statusAllPrint "$cand"
+done
+
+return 0
+}
+
+checkDependencies
+parseAndCheckArgs "$@"
+
+case "${B_ARGS[0]}" in
+	"open")
+		openC
+		;;
+
+	"luksInit")
+		luksInitC
+		;;
+
+	"close")
+		closeC
+		;;
+
+	"status")
+		[ $# -gt 1 ] && statusSingleC || statusAllC
+		;;
+
+	*)
+		usage
+		;;
+esac
