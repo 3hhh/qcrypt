@@ -574,6 +574,7 @@ done
 b_info "Copying the encrypted container to the VM $sourceVM at ${sourceFile}..."
 sync
 b_dom0_copy "$dom0Container" "$sourceVM" "$sourceFile" 1 1 || { B_ERR="Failed to copy the encrypted container to the source VM $sourceVM." ; B_E }
+sync
 
 b_info "Luks init done."
 b_info "Cleaning up... (this is not hanging)"
