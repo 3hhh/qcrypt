@@ -151,6 +151,7 @@ local vmDeps="cryptsetup
 losetup
 findmnt
 head
+tar
 xargs"
 b_dom0_setVMDeps "$vmDeps"
 }
