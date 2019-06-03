@@ -487,7 +487,7 @@ b_enforceUser "root"
 # b. we need to have enough space in dom0
 checkAvailableSpace "$workingDir" "$size" || { B_ERR="$workingDir provides less space than required by the -s parameter." ; B_E }
 # c. all necessary VMs must run
-[ $autostart -eq 0 ] && b_dom0_ensureRunning "$sourceVM" "$@" || b_dom0_isRunning "$sourceVM" "$@"
+[ $autostart -eq 0 ] && b_dom0_ensureRunning "$sourceVM" "${dsts[@]}" || b_dom0_isRunning "$sourceVM" "${dsts[@]}"
 # d. make sure the source VM doesn't already have a file named $sourceFile
 ensureFileDoesNotExistIn "$sourceVM" "$sourceFile"
 # e. make sure the key ID is not used in any of the destination VMs
