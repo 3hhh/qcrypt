@@ -503,15 +503,18 @@ done
 
 #init container
 local dom0Container=""
+local cmd=""
 dom0Container="$(mktemp -p "$workingDir")" || { B_ERR="Failed to create a temporary file." ; B_E }
-b_traps_add "rm -f \"$dom0Container\"" EXIT || { B_ERR="Failed to register a cleanup trap." ; B_E }
+printf -v cmd 'rm -f %q' "$dom0Container"
+b_traps_add "$cmd" EXIT || { B_ERR="Failed to register a cleanup trap." ; B_E }
 b_info "Initializing the luks container (this may take a while)..."
 head -c $size < "$enCon" > "$dom0Container" || { B_ERR="Failed to initialize the container at $dom0Container." ; B_E }
 
 #create a loop device for the container
 local dom0ContainerLoop=""
 dom0ContainerLoop="$(losetup -f --show "$dom0Container")" || { B_ERR="Failed to create a loop device." ; B_E }
-b_traps_prepend "losetup -d \"$dom0ContainerLoop\"" EXIT || { B_ERR="Failed to register a cleanup trap." ; B_E }
+printf -v cmd 'losetup -d %q' "$dom0ContainerLoop"
+b_traps_prepend "$cmd" EXIT || { B_ERR="Failed to register a cleanup trap." ; B_E }
 
 #generate key files & add encryption layers
 local dom0KeyFile=""
@@ -521,7 +524,8 @@ for dst in "${dsts[@]}" ; do
 	#generate key
 	b_info "Generating the key for the VM ${dst}..."
 	dom0KeyFile="$(mktemp -p "$workingDir")" || { B_ERR="Failed to create a temporary file." ; B_E }
-	b_traps_add "rm -f \"$dom0KeyFile\"" EXIT || { B_ERR="Failed to register a cleanup trap." ; B_E }
+	printf -v cmd 'rm -f %q' "$dom0KeyFile"
+	b_traps_add "$cmd" EXIT || { B_ERR="Failed to register a cleanup trap." ; B_E }
 	head -c "$keySize" < "$enKey" > "$dom0KeyFile" || { B_ERR="Failed to initialize the key for the VM $dst at $dom0KeyFile." ; B_E }
 	dom0KeyFiles["$dst"]="$dom0KeyFile"
 
@@ -533,7 +537,8 @@ for dst in "${dsts[@]}" ; do
 	b_info "Switching to the next encryption layer..."
 	local luksName="$dst-$keyId"
 	cryptsetup open --type luks --key-file "$dom0KeyFile" "$curDevice" "$luksName" || { B_ERR="Failed to open the encryption layer created for the VM $dst." ; B_E }
-	b_traps_prepend "cryptsetup close \"$luksName\"" EXIT || { B_ERR="Failed to register a cleanup trap." ; B_E }
+	printf -v cmd 'cryptsetup close %q' "$luksName"
+	b_traps_prepend "$cmd" EXIT || { B_ERR="Failed to register a cleanup trap." ; B_E }
 	curDevice="/dev/mapper/$luksName"
 done
 
