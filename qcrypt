@@ -219,7 +219,7 @@ case "$cmd" in
 
 	"luksInit")
 		#NOTE: we must also check for the supported luksFormat options here
-		b_args_assertOptions "--a" "--size" "--wd" "--ks" "--bak" "--fs" "--enkey" "--encon" \
+		b_args_assertOptions "-a" "--size" "--wd" "--ks" "--bak" "--fs" "--enkey" "--encon" \
 			"--hash" "--cipher" "--key-slot" "--keyfile-offset" "--keyfile-size" "--use-random" "--use-urandom" "--iter-time" "--header"
 		;;
 
