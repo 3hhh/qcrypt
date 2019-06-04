@@ -438,7 +438,7 @@ local autostart=1
 #parse params
 [ -n "${B_ARGS_OPTS["-a_0"]+exists}" ] && autostart=0
 if [ -n "${B_ARGS_OPTS["--size_0"]+exists}" ] ; then
-	size="$(b_fs_parseSize "${B_ARGS_OPTS["-s-size_0"]}")" || { B_ERR="Failed to parse the --size parameter: $2" ; B_E }
+	size="$(b_fs_parseSize "${B_ARGS_OPTS["--size_0"]}")" || { B_ERR="Failed to parse the --size parameter: $2" ; B_E }
 fi
 if [ -n "${B_ARGS_OPTS["--wd_0"]+exists}" ] ; then
 	workingDir="${B_ARGS_OPTS["--wd_0"]}"
