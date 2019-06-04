@@ -26,7 +26,7 @@ function setup {
 	[[ "$output" == *"help"* ]]
 
 	#some with incorrect parameters
-	runSL "$QCRYPT" open -rincorrect -- "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/pstest" "tstkey-ps" "${TEST_STATE["QCRYPT_VM_2"]}"
+	runSL "$QCRYPT" open --rincorrect -- "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/pstest" "tstkey-ps" "${TEST_STATE["QCRYPT_VM_2"]}"
 	echo "$output"
 	[ $status -ne 0 ]
 	[ -n "$output" ]

@@ -31,19 +31,23 @@ function setup {
 	[ $status -ne 0 ]
 	[[ "$output" == *"Usage: qcryptd"* ]]
 
-	runSL "$QCRYPTD" -qincorrect status
+	runSL "$QCRYPTD" incorrectCmd
 	[ $status -ne 0 ]
 	[ -n "$output" ]
 
-	runSL "$QCRYPTD" -qincorrect start
+	runSL "$QCRYPTD" --qincorrect status
 	[ $status -ne 0 ]
 	[ -n "$output" ]
 
-	runSL "$QCRYPTD" -v -qincorrect stop
+	runSL "$QCRYPTD" --qincorrect start
 	[ $status -ne 0 ]
 	[ -n "$output" ]
 
-	runSL "$QCRYPTD" -qincorrect -v check
+	runSL "$QCRYPTD" -v --qincorrect stop
+	[ $status -ne 0 ]
+	[ -n "$output" ]
+
+	runSL "$QCRYPTD" --qincorrect -v check
 	[ $status -ne 0 ]
 	[ -n "$output" ]
 }
@@ -206,7 +210,7 @@ function setup {
 	[ $status -ne 0 ]
 	[[ "$output" == *"ERROR"* ]]
 
-	runSL "$QCRYPTD" -incorrect start
+	runSL "$QCRYPTD" --incorrect start
 	[ $status -ne 0 ]
 	[[ "$output" == *"ERROR"* ]]
 }
