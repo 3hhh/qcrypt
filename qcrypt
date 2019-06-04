@@ -55,14 +55,14 @@ For most threat models it should suffice to have 1-2 layers of encryption. Each 
    [destination vm 1] doing its encryption job properly.
  - More layers can make sense if you want to trust the middle encryption/decryption VMs less and share your trust among them.
 
-[source vm]		The VM where to find the data to decrypt ([source file]).
+[source vm]		 The VM where to find the data to decrypt ([source file]).
 
-[source file]		Full path to the encrypted file inside the [source vm].
+[source file]		 Full path to the encrypted file inside the [source vm].
 
-[key id]		An identifying string for the keys to use. Each VM must have its own key saved under that identifier.
-			The identifier is the same for all VMs though. Keys are stored locally inside each VM at $QCRYPT_KEYS.
-			The identifier may only consist of numbers and characters.
-			If you lose them, you lose all encrypted data. So better create a backup.
+[key id]		 An identifying string for the keys to use. Each VM must have its own key saved under that identifier.
+			 The identifier is the same for all VMs though. Keys are stored locally inside each VM at $QCRYPT_KEYS.
+			 The identifier may only consist of numbers and characters.
+			 If you lose them, you lose all encrypted data. So better create a backup.
 
 [destination vm 1 .. n]	Layer of VMs to use for decryption in exactly that order. Each VM must have a matching decryption key.
 
@@ -73,14 +73,14 @@ open
 	to [destination vm 2], decrypt there and so on.
 
 	Options:
-	-a		Autostart all VMs required to be running for this operation (default: error out on stopped VMs).
-	-mp [path]	After all layers of encryptions are decrypted in [vm n], attempt to mount the decrypted data to [path].
-			Otherwise the plaintext device is not mounted.
-	-inj [vm] [key] Inject the given [key] (full path) from dom0 into the [vm] before opening. This can be useful for disposable VMs.
-			The parameter can be specified multiple times. Won't override existing keys.
-	--type [name]	The encryption container to use: plain|luks|loopaes|tcrypt, default: luks.
-	--ro		Attach all involved devices in read-only mode (default: r/w).
-	--noclose	Bypass the initial close. This may be dangerous if you don't know what you're doing.
+	-a		 Autostart all VMs required to be running for this operation (default: error out on stopped VMs).
+	--mp [path]	 After all layers of encryptions are decrypted in [vm n], attempt to mount the decrypted data to [path].
+			 Otherwise the plaintext device is not mounted.
+	--inj [vm] [key] Inject the given [key] (full path) from dom0 into the [vm] before opening. This can be useful for disposable VMs.
+			 The parameter can be specified multiple times. Won't override existing keys.
+	--type [name]	 The encryption container to use: plain|luks|loopaes|tcrypt, default: luks.
+	--ro		 Attach all involved devices in read-only mode (default: r/w).
+	--noclose	 Bypass the initial close. This may be dangerous if you don't know what you're doing.
 
 status
 	Check the online and decryption status of the [source vm], all intermediary VMs and the target VM. A non-zero status code indicates the
@@ -89,8 +89,8 @@ status
 	Invoking the status command without any other parameters will make $B_SCRIPT_NAME attempt to find all potential encryption chains.
 
 	Options:
-	-mp [path]	Check whether the final device is mounted at the given [path]. If no [path] is specified, check whether it is mounted
-			somewhere.
+	--mp [path]	 Check whether the final device is mounted at the given [path]. If no [path] is specified, check whether it is mounted
+			 somewhere.
 
 luksInit
 	Create a new encrypted container in [source vm] as [source file] ([source file] must be a non-existing file path here) and pass the
@@ -102,15 +102,15 @@ luksInit
 	The initial container creation will happen in dom0.
 
 	Options:
-	-a		Autostart all VMs required to be running for this operation (default: error out on stopped VMs).
-	-s [size]	Size to allocate for the container (default: 1G). Supported units: K, M, G, T.
-	-wd [dir] 	Use the given directory in dom0 for all files temporarily created during the init process (default: /tmp/). Its capacity
-			must be larger than the -s parameter. /tmp/ in Qubes OS usually only fits 2G.
-	-k [size]	Size of the keys to deploy in bytes (default: 100).
-	-bak [folder]	Create a backup of all keys in dom0 in the given folder (default: no backup).
-	-fs [type]	Generate the given file system type with mkfs in the decrypted container (default: ext4).
-	-enkey [device]	Block device to use as entropy source for the key generation (default: /dev/random).
-	-encon [device] Block device to use as entropy source for the container initialization (default: /dev/urandom).
+	-a		 Autostart all VMs required to be running for this operation (default: error out on stopped VMs).
+	--size [size]	 Size to allocate for the container (default: 1G). Supported units: K, M, G, T.
+	--wd [dir] 	 Use the given directory in dom0 for all files temporarily created during the init process (default: /tmp/). Its capacity
+			 must be larger than the --size parameter. /tmp/ in Qubes OS usually only fits 2G.
+	--ks [size]	 Size of the keys to deploy in bytes (default: 100).
+	--bak [folder]	 Create a backup of all keys in dom0 in the given folder (default: no backup).
+	--fs [type]	 Generate the given file system type with mkfs in the decrypted container (default: ext4).
+	--enkey [device] Block device to use as entropy source for the key generation (default: /dev/random).
+	--encon [device] Block device to use as entropy source for the container initialization (default: /dev/urandom).
 
 	All cryptsetup luksFormat options are supported in their long format as well. They are directly passed to cryptsetup.
 
@@ -119,10 +119,10 @@ close
 	on all VMs were detached.
 
 	Options:
-	-sd		Shut down any VMs preventing a successful close operation. This can be useful if the close operation fails due to
-			Qubes OS or libxenlight errors.
-	--force		Bypass any checks and attempt to close the given chain. This can for example be used if a previous detach only happened
-			partially or you're very confident that you're doing everything correctly.
+	--sd		 Shut down any VMs preventing a successful close operation. This can be useful if the close operation fails due to
+			 Qubes OS or libxenlight errors.
+	--force		 Bypass any checks and attempt to close the given chain. This can for example be used if a previous detach only happened
+			 partially or you're very confident that you're doing everything correctly.
 help
 	print this help"
 exit 1
@@ -192,7 +192,7 @@ echo "${QCRYPT_KEYS/#~/\/home\/$vmUser}/$keyId"
 #@B_E
 function parseAndCheckArgs {
 #NOTE: in order to support the cryptsetup luksFormat options, we unfortunately need to add them here (the ones that don't make sense with qcrypt and the ones without parameters were left out)
-b_args_init 0 "-mp" 1 "-inj" 2 "--type" 1 "-s" 1 "-wd" 1 "-k" 1 "-bak" 1 "-fs" 1 "-enkey" 1 "-encon" 1 \
+b_args_init 0 "--mp" 1 "--inj" 2 "--type" 1 "--size" 1 "--wd" 1 "--ks" 1 "--bak" 1 "--fs" 1 "--enkey" 1 "--encon" 1 \
 	"--hash" 1 "--cipher" 1 "--key-slot" 1 "--keyfile-offset" 1 "--keyfile-size" 1 "--iter-time" 1 "--header" 1
 b_args_setOptionParamSeparator "<aosep>"
 b_args_parse "$@"
@@ -214,22 +214,22 @@ local cmd="${B_ARGS[0]}"
 
 case "$cmd" in
 	"open")
-		b_args_assertOptions "-a" "-mp" "-inj" "--type" "--ro" "--noclose"
+		b_args_assertOptions "-a" "--mp" "--inj" "--type" "--ro" "--noclose"
 		;;
 
 	"luksInit")
 		#NOTE: we must also check for the supported luksFormat options here
-		b_args_assertOptions "-a" "-s" "-wd" "-k" "-bak" "-fs" "-enkey" "-encon" \
+		b_args_assertOptions "--a" "--size" "--wd" "--ks" "--bak" "--fs" "--enkey" "--encon" \
 			"--hash" "--cipher" "--key-slot" "--keyfile-offset" "--keyfile-size" "--use-random" "--use-urandom" "--iter-time" "--header"
 		;;
 
 	"close")
-		b_args_assertOptions "-sd" "--force"
+		b_args_assertOptions "--sd" "--force"
 		;;
 
 	"status")
 		[ ${#B_ARGS[@]} -eq 1 ] && [ ${#B_ARGS_OPTS[@]} -eq 0 ] && return 0
-		b_args_assertOptions "-mp"
+		b_args_assertOptions "--mp"
 		;;
 
 	*)
@@ -266,14 +266,14 @@ declare -A injections
 
 #parse params
 [ -n "${B_ARGS_OPTS["-a_0"]+exists}" ] && autostart=0
-[ -n "${B_ARGS_OPTS["-mp_0"]+exists}" ] && mountPoint="${B_ARGS_OPTS["-mp_0"]}"
+[ -n "${B_ARGS_OPTS["--mp_0"]+exists}" ] && mountPoint="${B_ARGS_OPTS["--mp_0"]}"
 [ -n "${B_ARGS_OPTS["--type_0"]+exists}" ] && encType="${B_ARGS_OPTS["--type_0"]}"
 [ -n "${B_ARGS_OPTS["--ro_0"]+exists}" ] && rwFlag=1
 [ -n "${B_ARGS_OPTS["--noclose_0"]+exists}" ] && noClose=0
 local i=0
 local sep="$(b_args_getOptionParamSeparator)"
-while [ -n "${B_ARGS_OPTS["-inj_$i"]+exists}" ] ; do
-	local pars="${B_ARGS_OPTS["-inj_$i"]}"
+while [ -n "${B_ARGS_OPTS["--inj_$i"]+exists}" ] ; do
+	local pars="${B_ARGS_OPTS["--inj_$i"]}"
 	local injTarget="${pars%${sep}*}"
 	local injKey="${pars#*$sep}"
 	injections["$injTarget"]="$injKey"
@@ -437,33 +437,33 @@ local autostart=1
 
 #parse params
 [ -n "${B_ARGS_OPTS["-a_0"]+exists}" ] && autostart=0
-if [ -n "${B_ARGS_OPTS["-s_0"]+exists}" ] ; then
-	size="$(b_fs_parseSize "${B_ARGS_OPTS["-s_0"]}")" || { B_ERR="Failed to parse the -s parameter: $2" ; B_E }
+if [ -n "${B_ARGS_OPTS["--size_0"]+exists}" ] ; then
+	size="$(b_fs_parseSize "${B_ARGS_OPTS["-s-size_0"]}")" || { B_ERR="Failed to parse the --size parameter: $2" ; B_E }
 fi
-if [ -n "${B_ARGS_OPTS["-wd_0"]+exists}" ] ; then
-	workingDir="${B_ARGS_OPTS["-wd_0"]}"
+if [ -n "${B_ARGS_OPTS["--wd_0"]+exists}" ] ; then
+	workingDir="${B_ARGS_OPTS["--wd_0"]}"
 	mkdir -p "$workingDir" || { B_ERR="Failed to create $workingDir." ; B_E }
 	[ -d "$workingDir" ] || { B_ERR="No directory: $workingDir" ; B_E }
 fi
-[ -n "${B_ARGS_OPTS["-k_0"]+exists}" ] && keySize="${B_ARGS_OPTS["-k_0"]}"
-if [ -n "${B_ARGS_OPTS["-enkey_0"]+exists}" ] ; then
-	enKey="${B_ARGS_OPTS["-enkey_0"]}"
+[ -n "${B_ARGS_OPTS["--ks_0"]+exists}" ] && keySize="${B_ARGS_OPTS["--ks_0"]}"
+if [ -n "${B_ARGS_OPTS["--enkey_0"]+exists}" ] ; then
+	enKey="${B_ARGS_OPTS["--enkey_0"]}"
 	[ -c "$enKey" ] || { B_ERR="No valid entropy source: $enKey" ; B_E }
 fi
-if [ -n "${B_ARGS_OPTS["-encon_0"]+exists}" ] ; then
-	enCon="${B_ARGS_OPTS["-encon_0"]}"
+if [ -n "${B_ARGS_OPTS["--encon_0"]+exists}" ] ; then
+	enCon="${B_ARGS_OPTS["--encon_0"]}"
 	[ -c "$enCon" ] || { B_ERR="No valid entropy source: $enCon" ; B_E }
 fi
-if [ -n "${B_ARGS_OPTS["-bak_0"]+exists}" ] ; then
-	keyBackupFolder="${B_ARGS_OPTS["-bak_0"]}"
+if [ -n "${B_ARGS_OPTS["--bak_0"]+exists}" ] ; then
+	keyBackupFolder="${B_ARGS_OPTS["--bak_0"]}"
 	mkdir -p "$keyBackupFolder" || { B_ERR="Failed to create $keyBackupFolder." ; B_E }
 	[ -d "$keyBackupFolder" ] || { B_ERR="No directory: $keyBackupFolder" ; B_E }
 fi
-[ -n "${B_ARGS_OPTS["-fs_0"]+exists}" ] && fsType="${B_ARGS_OPTS["-fs_0"]}"
+[ -n "${B_ARGS_OPTS["--fs_0"]+exists}" ] && fsType="${B_ARGS_OPTS["--fs_0"]}"
 
 #the remaining options are cryptsetup parameters
 local rem="$(b_setErrorHandler "b_defaultErrorHandler 1 1 1" ;
-	b_args_assertOptions "-a" "-s" "-wd" "-k" "-bak" "-fs" "-enkey" "-encon" ;
+	b_args_assertOptions "-a" "--size" "--wd" "--ks" "--bak" "--fs" "--enkey" "--encon" ;
 	echo "$B_ERR")"
 local opt=
 local firstLine=0
@@ -486,7 +486,7 @@ b_info "Doing some safety checks..."
 # a. we need to be root in dom0
 b_enforceUser "root"
 # b. we need to have enough space in dom0
-checkAvailableSpace "$workingDir" "$size" || { B_ERR="$workingDir provides less space than required by the -s parameter." ; B_E }
+checkAvailableSpace "$workingDir" "$size" || { B_ERR="$workingDir provides less space than required by the --size parameter." ; B_E }
 # c. all necessary VMs must run
 [ $autostart -eq 0 ] && b_dom0_ensureRunning "$sourceVM" "${dsts[@]}" || b_dom0_isRunning "$sourceVM" "${dsts[@]}"
 # d. make sure the source VM doesn't already have a file named $sourceFile
@@ -603,7 +603,7 @@ local shutdown=1
 local force=1
 
 #parse params
-[ -n "${B_ARGS_OPTS["-sd_0"]+exists}" ] && shutdown=0
+[ -n "${B_ARGS_OPTS["--sd_0"]+exists}" ] && shutdown=0
 [ -n "${B_ARGS_OPTS["--force_0"]+exists}" ] && force=0
 
 local sourceVM="${B_ARGS[1]}"
@@ -789,7 +789,7 @@ function statusSingleC {
 local mountPoint=""
 
 #parse params
-[ -n "${B_ARGS_OPTS["-mp_0"]+exists}" ] && mountPoint="${B_ARGS_OPTS["-mp_0"]}"
+[ -n "${B_ARGS_OPTS["--mp_0"]+exists}" ] && mountPoint="${B_ARGS_OPTS["--mp_0"]}"
 
 local sourceVM="${B_ARGS[1]}"
 local sourceFile="${B_ARGS[2]}"

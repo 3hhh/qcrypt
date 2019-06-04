@@ -63,7 +63,7 @@ Please consult `qcrypt help` for further details.
 #### Examples
 
 ```
-qcrypt -s 3G -wd ~/qcrypt.tmp/ -bak ~/qcrypt.keys/ luksInit sys-usb /home/user/encrypted.lks secret.key mediator-vm work-vm
+qcrypt --size 3G --wd ~/qcrypt.tmp/ --bak ~/qcrypt.keys/ luksInit sys-usb /home/user/encrypted.lks secret.key mediator-vm work-vm
 ```
 
 *Explanation:*
@@ -72,7 +72,7 @@ Moreover create a backup of all involved keys in dom0 inside the `~/qcrypt.keys/
 The current example has two destination VMs, but leaving out the `mediator-vm` can be appropriate (it depends on your threat model). Please consult `qcrypt help` for further explanations.
 
 ```
-qcrypt -mp /mnt/ open sys-usb /home/user/encrypted.lks secret.key mediator-vm work-vm
+qcrypt --mp /mnt/ open sys-usb /home/user/encrypted.lks secret.key mediator-vm work-vm
 ```
 
 *Explanation:*

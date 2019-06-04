@@ -114,7 +114,7 @@ function assertQcryptStatus {
 	shift 2
 
 	local statusParams=""
-	[ -n "$mp" ] && printf -v statusParams -- '-mp %q' "$mp"
+	[ -n "$mp" ] && printf -v statusParams -- '--mp %q' "$mp"
 	runSL "$QCRYPT" status $statusParams -- "$@"
 	echo "$output"
 	[ -n "$output" ]

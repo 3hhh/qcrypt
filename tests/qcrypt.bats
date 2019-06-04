@@ -159,7 +159,7 @@ function postInitChecks {
 	local wd="$(mktemp -d)"
 	local bak="$(mktemp -d)"
 	local s="${QCRYPT_CSIZE}M"
-	runSL "$QCRYPT" "luksInit" -s "$s" -wd "$wd" -bak "$bak" -- "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/foobar" "tstkey" "${TEST_STATE["QCRYPT_VM_2"]}"
+	runSL "$QCRYPT" "luksInit" --size "$s" --wd "$wd" --bak "$bak" -- "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/foobar" "tstkey" "${TEST_STATE["QCRYPT_VM_2"]}"
 	echo "$output"
 	[ $status -eq 0 ]
 	[ -n "$output" ]
@@ -169,7 +169,7 @@ function postInitChecks {
 
 	#key overwrite shouldn't happen
 	#NOTE: container overwrite was checked above already
-	runSL "$QCRYPT" "luksInit" -s "$s" -wd "$wd" -bak "$bak" -- "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/foobar2" "tstkey" "${TEST_STATE["QCRYPT_VM_2"]}"
+	runSL "$QCRYPT" "luksInit" --size "$s" --wd "$wd" --bak "$bak" -- "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/foobar2" "tstkey" "${TEST_STATE["QCRYPT_VM_2"]}"
 	echo "$output"
 	[ $status -ne 0 ]
 	[[ "$output" == *"ERROR"* ]]
@@ -178,7 +178,7 @@ function postInitChecks {
 
 	#try again with empty bak
 	local bak2="$(mktemp -d)"
-	runSL "$QCRYPT" "luksInit" -s "$s" -wd "$wd" -bak "$bak2" -- "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/foobar3" "tstkey" "${TEST_STATE["QCRYPT_VM_2"]}"
+	runSL "$QCRYPT" "luksInit" --size "$s" --wd "$wd" --bak "$bak2" -- "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/foobar3" "tstkey" "${TEST_STATE["QCRYPT_VM_2"]}"
 	echo "$output"
 	[ $status -ne 0 ]
 	[[ "$output" == *"ERROR"* ]]
@@ -194,7 +194,7 @@ function postInitChecks {
 	[ $status -ne 0 ]
 
 	rm -f "$bak"/*
-	runSL "$QCRYPT" "luksInit" -s "$s" -wd "$wd" -a -bak "$bak" -- "$UTD_QUBES_TESTVM" "/tmp/foobar" "tstkey2" "${TEST_STATE["QCRYPT_VM_1"]}"
+	runSL "$QCRYPT" "luksInit" --size "$s" --wd "$wd" -a --bak "$bak" -- "$UTD_QUBES_TESTVM" "/tmp/foobar" "tstkey2" "${TEST_STATE["QCRYPT_VM_1"]}"
 	echo "$output"
 	[ $status -eq 0 ]
 	[ -n "$output" ]
@@ -206,7 +206,7 @@ function postInitChecks {
 
 	#different key size, cryptsetup parameter & 2 layers
 	rm -f "$bak"/*
-	runSL "$QCRYPT" "luksInit" --hash sha256 -s "$s" -k 70 -wd "$wd" -bak "$bak" -- "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/kstest" "tstkey-ks" "${TEST_STATE["QCRYPT_VM_2"]}" "$UTD_QUBES_TESTVM"
+	runSL "$QCRYPT" "luksInit" --hash sha256 --size "$s" --ks 70 --wd "$wd" --bak "$bak" -- "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/kstest" "tstkey-ks" "${TEST_STATE["QCRYPT_VM_2"]}" "$UTD_QUBES_TESTVM"
 	echo "$output"
 	[ $status -eq 0 ]
 	[ -n "$output" ]
@@ -215,7 +215,7 @@ function postInitChecks {
 	
 	#test open & close for the one we just initiated
 	echo "open & close checks for the container that was just created:"
-	runSL "$QCRYPT" open -mp "/mnt" -- "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/kstest" "tstkey-ks" "${TEST_STATE["QCRYPT_VM_2"]}" "$UTD_QUBES_TESTVM"
+	runSL "$QCRYPT" open --mp "/mnt" -- "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/kstest" "tstkey-ks" "${TEST_STATE["QCRYPT_VM_2"]}" "$UTD_QUBES_TESTVM"
 	echo "$output"
 	[ $status -eq 0 ]
 	[[ "$output" == *"Open done."* ]]
@@ -231,7 +231,7 @@ function postInitChecks {
 	postCloseChecks 0 "/mnt" "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/kstest" "tstkey-ks" "${TEST_STATE["QCRYPT_VM_2"]}" "$UTD_QUBES_TESTVM"
 
 	#reopen to check whether the file we created after the first open is still there
-	runSL "$QCRYPT" open -mp "/mnt" -- "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/kstest" "tstkey-ks" "${TEST_STATE["QCRYPT_VM_2"]}" "$UTD_QUBES_TESTVM"
+	runSL "$QCRYPT" open --mp "/mnt" -- "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/kstest" "tstkey-ks" "${TEST_STATE["QCRYPT_VM_2"]}" "$UTD_QUBES_TESTVM"
 	echo "$output"
 	[ $status -eq 0 ]
 	[[ "$output" == *"Open done."* ]]
@@ -254,32 +254,32 @@ function postInitChecks {
 	local fixturePath="$(getFixturePath "1layer01")"
 	
 	#non-existing source VM
-	runSL "$QCRYPT" open -mp "/mnt" -- "nonexisting-src" "/tmp/1layer01" "1layer01" "${TEST_STATE["QCRYPT_VM_2"]}"
+	runSL "$QCRYPT" open --mp "/mnt" -- "nonexisting-src" "/tmp/1layer01" "1layer01" "${TEST_STATE["QCRYPT_VM_2"]}"
 	echo "$output"
 	[ $status -ne 0 ]
 	[[ "$output" == *"ERROR"* ]]
 
 	#missing key
 	copyFixture "1layer01" "${TEST_STATE["QCRYPT_VM_1"]}"
-	runSL "$QCRYPT" open -mp "/mnt" -- "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/1layer01" "1layer01" "${TEST_STATE["QCRYPT_VM_2"]}"
+	runSL "$QCRYPT" open --mp "/mnt" -- "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/1layer01" "1layer01" "${TEST_STATE["QCRYPT_VM_2"]}"
 	echo "$output"
 	[ $status -ne 0 ]
 	[[ "$output" == *"ERROR"* ]]
 
 	#missing source container
-	runSL "$QCRYPT" open -inj "${TEST_STATE["QCRYPT_VM_2"]}" "$fixturePath/keys/target" -mp "/mnt" -- "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/nonexisting" "1layer01" "${TEST_STATE["QCRYPT_VM_2"]}"
+	runSL "$QCRYPT" open --inj "${TEST_STATE["QCRYPT_VM_2"]}" "$fixturePath/keys/target" --mp "/mnt" -- "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/nonexisting" "1layer01" "${TEST_STATE["QCRYPT_VM_2"]}"
 	echo "$output"
 	[ $status -ne 0 ]
 	[[ "$output" == *"ERROR"* ]]
 
 	#incorrect target
-	runSL "$QCRYPT" open -inj "${TEST_STATE["QCRYPT_VM_2"]}" "$fixturePath/keys/target" -mp "/mnt" -- "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/1layer01" "1layer01" "nonexisting-target"
+	runSL "$QCRYPT" open --inj "${TEST_STATE["QCRYPT_VM_2"]}" "$fixturePath/keys/target" --mp "/mnt" -- "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/1layer01" "1layer01" "nonexisting-target"
 	echo "$output"
 	[ $status -ne 0 ]
 	[[ "$output" == *"ERROR"* ]]
 
 	#correct open with a single layer
-	runSL "$QCRYPT" open -inj "${TEST_STATE["QCRYPT_VM_2"]}" "$fixturePath/keys/target" -mp "/mnt" -- "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/1layer01" "1layer01" "${TEST_STATE["QCRYPT_VM_2"]}"
+	runSL "$QCRYPT" open --inj "${TEST_STATE["QCRYPT_VM_2"]}" "$fixturePath/keys/target" --mp "/mnt" -- "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/1layer01" "1layer01" "${TEST_STATE["QCRYPT_VM_2"]}"
 	echo "$output"
 	[ $status -eq 0 ]
 	[[ "$output" == *"Open done."* ]]
@@ -289,7 +289,7 @@ function postInitChecks {
 	#correct open with two layers, r/o and call syntax as in help
 	copyFixture "2layer01" "${TEST_STATE["QCRYPT_VM_1"]}"
 	local fixturePath="$(getFixturePath "2layer01")"
-	runSL "$QCRYPT" -a --ro -inj "${TEST_STATE["QCRYPT_VM_2"]}" "$fixturePath/keys/middle" -inj "$UTD_QUBES_TESTVM" "$fixturePath/keys/target" -mp "/mnt" open "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/2layer01" "2layer01" "${TEST_STATE["QCRYPT_VM_2"]}" "$UTD_QUBES_TESTVM"
+	runSL "$QCRYPT" -a --ro --inj "${TEST_STATE["QCRYPT_VM_2"]}" "$fixturePath/keys/middle" --inj "$UTD_QUBES_TESTVM" "$fixturePath/keys/target" --mp "/mnt" open "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/2layer01" "2layer01" "${TEST_STATE["QCRYPT_VM_2"]}" "$UTD_QUBES_TESTVM"
 	echo "$output"
 	[ $status -eq 0 ]
 	[[ "$output" == *"Open done."* ]]
@@ -399,8 +399,8 @@ function testFailStatus {
 
 @test "status - single" {
 	#correct status for the two open chains
-	testSuccStatus 1 -mp "/mnt" -- "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/1layer01" "1layer01" "${TEST_STATE["QCRYPT_VM_2"]}"
-	testSuccStatus 2 -mp "/mnt" -- "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/2layer01" "2layer01" "${TEST_STATE["QCRYPT_VM_2"]}" "$UTD_QUBES_TESTVM"
+	testSuccStatus 1 --mp "/mnt" -- "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/1layer01" "1layer01" "${TEST_STATE["QCRYPT_VM_2"]}"
+	testSuccStatus 2 --mp "/mnt" -- "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/2layer01" "2layer01" "${TEST_STATE["QCRYPT_VM_2"]}" "$UTD_QUBES_TESTVM"
 	testSuccStatus 1 -- "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/1layer01" "1layer01" "${TEST_STATE["QCRYPT_VM_2"]}"
 	testSuccStatus 2 -- "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/2layer01" "2layer01" "${TEST_STATE["QCRYPT_VM_2"]}" "$UTD_QUBES_TESTVM"
 
@@ -478,25 +478,25 @@ function testFailStatus {
 	postCloseChecks 0 "/mnt" "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/1layer01" "1layer01" "${TEST_STATE["QCRYPT_VM_2"]}"
 
 	#partial closes shouldn't work
-	runSL "$QCRYPT" close -sd -- "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/2layer01" "2layer01" "${TEST_STATE["QCRYPT_VM_2"]}"
+	runSL "$QCRYPT" close --sd -- "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/2layer01" "2layer01" "${TEST_STATE["QCRYPT_VM_2"]}"
 	echo "$output"
 	[ $status -ne 0 ]
 	[[ "$output" == *"ERROR"* ]]
 
-	runSL "$QCRYPT" close -sd -- "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/2layer01" "2layer01" "$UTD_QUBES_TESTVM"
+	runSL "$QCRYPT" close --sd -- "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/2layer01" "2layer01" "$UTD_QUBES_TESTVM"
 	echo "$output"
 	[ $status -ne 0 ]
 	[[ "$output" == *"ERROR"* ]]
 
-	runSL "$QCRYPT" close -sd -- "${TEST_STATE["QCRYPT_VM_2"]}" "/tmp/2layer01" "2layer01" "$UTD_QUBES_TESTVM"
+	runSL "$QCRYPT" close --sd -- "${TEST_STATE["QCRYPT_VM_2"]}" "/tmp/2layer01" "2layer01" "$UTD_QUBES_TESTVM"
 	echo "$output"
 	[ $status -ne 0 ]
 	[[ "$output" == *"ERROR"* ]]
 
-	#for some reason this currently requires -sd (which is strange since it works @luksInit): otherwise I keep getting a libxenlight error
+	#for some reason this currently requires --sd (which is strange since it works @luksInit): otherwise I keep getting a libxenlight error
 	#we need --force because it was partially closed by the status test
 	#TODO: identify the root cause
-	runSL "$QCRYPT" close --force -sd -- "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/2layer01" "2layer01" "${TEST_STATE["QCRYPT_VM_2"]}" "$UTD_QUBES_TESTVM"
+	runSL "$QCRYPT" close --force --sd -- "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/2layer01" "2layer01" "${TEST_STATE["QCRYPT_VM_2"]}" "$UTD_QUBES_TESTVM"
 	echo "$output"
 	[ $status -eq 0 ]
 	[[ "$output" == *"Close done."* ]]
@@ -513,7 +513,7 @@ function testFailStatus {
 
 	#open, this time VM_2 as source --> VM_1
 	copyFixture "1layer01" "${TEST_STATE["QCRYPT_VM_2"]}"
-	runSL "$QCRYPT" open --ro -inj "${TEST_STATE["QCRYPT_VM_1"]}" "$(getFixturePath "1layer01/keys/target")" -mp "/mntpartial" -- "${TEST_STATE["QCRYPT_VM_2"]}" "/tmp/1layer01" "1layer01" "${TEST_STATE["QCRYPT_VM_1"]}"
+	runSL "$QCRYPT" open --ro --inj "${TEST_STATE["QCRYPT_VM_1"]}" "$(getFixturePath "1layer01/keys/target")" --mp "/mntpartial" -- "${TEST_STATE["QCRYPT_VM_2"]}" "/tmp/1layer01" "1layer01" "${TEST_STATE["QCRYPT_VM_1"]}"
 	echo "$output"
 	[ $status -eq 0 ]
 	[[ "$output" == *"Open done."* ]]

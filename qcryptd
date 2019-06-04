@@ -131,7 +131,7 @@ chains [target]
 	Show the qcrypt status commands for all chains related to the given configuration target (default: default).
 
 	Options:
-	-nc		Don't display the configuration files.
+	-n		Don't display the configuration files.
 	-e		Execute the qcrypt status commands and provide a short summary for each. The qcryptd exit code indicates the number
 			of chains in an invalid state.
 
@@ -317,7 +317,7 @@ for ((i=1;;i++)) ; do
 	printf -v argChain '%s %q' "$argChain" "$vm"
 	inj="${CHAINS2INFO["${chainId}_destination inj $i"]}"
 	if [ -n "$inj" ] ; then
-		printf -v options '%s -inj %q %q' "$options" "$vm" "$inj"
+		printf -v options '%s --inj %q %q' "$options" "$vm" "$inj"
 	fi
 done
 
@@ -325,7 +325,7 @@ done
 local cmd=
 [ ${CHAINS2INFO["${chainId}_autostart"]} -eq 0 ] && options="$options -a"
 [ ${CHAINS2INFO["${chainId}_read-only"]} -eq 0 ] && options="$options --ro"
-[ -n "${CHAINS2INFO["${chainId}_destination mount point"]}" ] && printf -v options '%s -mp %q' "$options" "${CHAINS2INFO["${chainId}_destination mount point"]}"
+[ -n "${CHAINS2INFO["${chainId}_destination mount point"]}" ] && printf -v options '%s --mp %q' "$options" "${CHAINS2INFO["${chainId}_destination mount point"]}"
 [ -n "${CHAINS2INFO["${chainId}_type"]}" ] && printf -v options '%s --type %q' "$options" "${CHAINS2INFO["${chainId}_type"]}"
 printf -v cmd '%q %s open -- %s' "$QCRYPT" "$options" "$argChain"
 CHAINS2INFO["${chainId}_open"]="$cmd"
@@ -402,7 +402,7 @@ parseConfigFiles "${B_ARGS[1]}"
 local execute=1
 [ -n "${B_ARGS_OPTS["-e_0"]+exists}" ] && execute=0
 local showConfigFiles=0
-[ -n "${B_ARGS_OPTS["-nc_0"]+exists}" ] && showConfigFiles=1
+[ -n "${B_ARGS_OPTS["-n_0"]+exists}" ] && showConfigFiles=1
 
 local ret=0
 local chain=
@@ -1102,7 +1102,7 @@ case "${B_ARGS[0]}" in
 		checkC
 		;;
 	"chains")
-		b_args_assertOptions "-v" "-nc" "-e"
+		b_args_assertOptions "-v" "-n" "-e"
 		[ ${#B_ARGS[@]} -gt 2 ] && usage
 		assertValidTarget
 		chainsC

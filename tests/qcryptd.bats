@@ -113,7 +113,7 @@ function setup {
 	[[ "${CHAINS2INFO["${chain}_post close command"]}" == "" ]]
 	echo a
 	local mainCmd="sys-usb /mnt-ex01//containers/ex01-container.luks ex01-key d-testing work"
-	[[ "${CHAINS2INFO["${chain}_open"]}" == *"qcrypt  -inj d-testing /root/qcrypt-keys/ex01_disp -mp /qcrypt-ex01 --type luks open -- $mainCmd" ]]
+	[[ "${CHAINS2INFO["${chain}_open"]}" == *"qcrypt  --inj d-testing /root/qcrypt-keys/ex01_disp --mp /qcrypt-ex01 --type luks open -- $mainCmd" ]]
 	echo b
 	[[ "${CHAINS2INFO["${chain}_status"]}" == *"qcrypt status -- $mainCmd" ]]
 	[[ "${CHAINS2INFO["${chain}_close"]}" == *"qcrypt close --force -- $mainCmd" ]]
@@ -143,7 +143,7 @@ function setup {
 	[[ "${CHAINS2INFO["${chain}_post close command"]}" == 'logger "stopped the ex03 chain"' ]]
 	echo d
 	local mainCmd="another-usb /mnt-ex03//containers/ex03-container.luks ex03-key d-testing work work2"
-	[[ "${CHAINS2INFO["${chain}_open"]}" == *"qcrypt  -inj d-testing /root/qcrypt-keys/ex03_disp -inj work /another/path.key -inj work2 /another/path2.key -a --ro -mp /qcrypt-ex03 --type luks open -- $mainCmd" ]]
+	[[ "${CHAINS2INFO["${chain}_open"]}" == *"qcrypt  --inj d-testing /root/qcrypt-keys/ex03_disp --inj work /another/path.key --inj work2 /another/path2.key -a --ro --mp /qcrypt-ex03 --type luks open -- $mainCmd" ]]
 	echo e
 	[[ "${CHAINS2INFO["${chain}_status"]}" == *"qcrypt status -- $mainCmd" ]]
 	[[ "${CHAINS2INFO["${chain}_close"]}" == *"qcrypt close --force -- $mainCmd" ]]
@@ -163,7 +163,7 @@ function setup {
 	local cnt="$(echo "$output" | wc -l)"
 	[ $cnt -eq 2 ]
 
-	runSL "$QCRYPTD" chains -v -nc "test-valid-01"
+	runSL "$QCRYPTD" chains -v -n "test-valid-01"
 	[ $status -eq 0 ]
 	[[ "$output" == *"qcrypt status"* ]]
 	[[ "$output" != *"ex01.ini"* ]]
@@ -171,7 +171,7 @@ function setup {
 	local cnt="$(echo "$output" | wc -l)"
 	[ $cnt -eq 2 ]
 	
-	runSL "$QCRYPTD" chains -v -e -nc "test-valid-01"
+	runSL "$QCRYPTD" chains -v -e -n "test-valid-01"
 	[ $status -eq 2 ]
 	[[ "$output" == *"qcrypt status"* ]]
 	[[ "$output" == *"state: bad"* ]]
