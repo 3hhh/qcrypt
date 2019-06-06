@@ -454,7 +454,10 @@ local notify="${2:-1}"
 local summary="${3:-"$B_SCRIPT_NAME: ERROR"}"
 [ $DEBUG -eq 0 ] && echo "$SECONDS [$BASHPID] ERROR: $msg"
 logger -p daemon.err -t "$B_SCRIPT_NAME" "[$BASHPID] $msg (target: $CONF_TARGET)"
-[ $notify -eq 0 ] && notify-send -u critical -t 15000 "$summary" "$msg"
+if [ $notify -eq 0 ] ; then
+	notify-send -u critical -t 15000 "$summary" "$msg" &
+	disown
+fi
 return 0
 }
 
@@ -466,7 +469,10 @@ local notify="${2:-1}"
 local summary="${3:-"$B_SCRIPT_NAME: INFO"}"
 [ $DEBUG -eq 0 ] && echo "$SECONDS [$BASHPID] INFO: $msg"
 logger -p daemon.notice -t "$B_SCRIPT_NAME" "[$BASHPID] $msg (target: $CONF_TARGET)"
-[ $notify -eq 0 ] && notify-send "$summary" "$msg"
+if [ $notify -eq 0 ] ; then
+	notify-send "$summary" "$msg" &
+	disown
+fi
 return 0
 }
 
