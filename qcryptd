@@ -1086,9 +1086,9 @@ local log="$1"
 
 #files may require deletion, if too large
 local lc=
-lc="$(b_fs_getLineCount "$log")" || { B_ERR="Failed to obtain the line count of $file. Permission issues?!" ; B_E }
+lc="$(b_fs_getLineCount "$log")" || { B_ERR="Failed to obtain the line count of $log. Permission issues?!" ; B_E }
 if [ $lc -gt $DEBUG_LINES_MAX ] ; then
-	rm -f "$log" || { B_ERR="Failed to remove the file $file." ; B_E }
+	rm -f "$log" || { B_ERR="Failed to remove the file $log." ; B_E }
 fi
 
 return 0
