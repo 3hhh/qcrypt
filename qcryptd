@@ -640,13 +640,14 @@ fi
 #open the chain
 cmd="${CHAINS2INFO["${chain}_open"]}"
 [ -z "$cmd" ] && B_ERR="Missing open command for chain $chain. Programming error?!" && B_E
-eval "$cmd" || { B_ERR="Failed to open the chain $chain. Check ${CHAINS2INFO["${chain}_status"]} for details." ; B_E }
+local notifySummary="$B_SCRIPT_NAME status: $chain"
+eval "$cmd" || { logError "Failed to open the chain $chain." 0 "$notifySummary" ; B_ERR="Failed to open the chain $chain. Check ${CHAINS2INFO["${chain}_status"]} for details." ; B_E }
 
 #execute the post open command
 cmd="${CHAINS2INFO["${chain}_post open command"]}"
 [ -n "$cmd" ] && eval "$cmd"
 
-logInfo "Opened the chain $chain." 0 "$B_SCRIPT_NAME status: $chain"
+logInfo "Opened the chain $chain." 0 "$notifySummary"
 return 0
 }
 
