@@ -27,6 +27,7 @@ b_import "args"
 b_import "daemon"
 b_import "proc"
 b_import "ini"
+b_import "fs"
 b_import "multithreading/mtx"
 b_import "os/qubes4/dom0"
 
@@ -48,6 +49,13 @@ DAEMON_INIT_DONE=1
 
 #debug mode on/off switch (-v flag)
 DEBUG=1
+
+#where to log stdout & stderr daemon output, if DEBUG=0
+DEBUG_OUT="$B_SCRIPT_DIR/qcryptd.log"
+DEBUG_ERR="$DEBUG_OUT"
+
+#maximum number of lines for the debug log to keep upon initialization
+DEBUG_LINES_MAX=100000
 
 #used by the daemon to store the configuration target
 CONF_TARGET=
@@ -1066,11 +1074,33 @@ getConfigFolder "$target" > /dev/null
 CONF_TARGET="$target"
 }
 
+#initLog [log target]
+#Initialize the given logging destination.
+#returns: Nothing.
+#@B_E
+function initLog {
+local log="$1"
+
+#nothing to do for devices
+[ -f "$log" ] || return 0
+
+#files may require deletion, if too large
+local lc=
+lc="$(b_fs_getLineCount "$log")" || { B_ERR="Failed to obtain the line count of $file. Permission issues?!" ; B_E }
+if [ $lc -gt $DEBUG_LINES_MAX ] ; then
+	rm -f "$log" || { B_ERR="Failed to remove the file $file." ; B_E }
+fi
+
+return 0
+}
+
 checkDependencies
 b_args_parse "$@"
 if [ -n "${B_ARGS_OPTS["-v_0"]+exists}" ] ; then
 	DEBUG=0
-	b_daemon_init 1 "" "$B_SCRIPT_DIR/qcryptd.out" "$B_SCRIPT_DIR/qcryptd.err"
+	initLog "$DEBUG_OUT"
+	initLog "$DEBUG_ERR"
+	b_daemon_init 1 "" "$DEBUG_OUT" "$DEBUG_ERR"
 else
 	DEBUG=1
 	b_daemon_init 1
