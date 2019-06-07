@@ -78,7 +78,7 @@ declare -gA CHAINS2INFO=()
 declare -gA VMS2CHAINS=()
 
 #maps tracking currently active devices, VMs and chains
-#ACTIVE_VMS / V:	VM name   --> 0/1
+#ACTIVE_VMS / V:	VM name   --> 0/1 (use isRunning [vm] to ontain the run state instead of this one)
 #ACTIVE_CHAINS / C:	chain id  --> 0/1 (use isActive [chain] to obtain the most recent state rather than this one)
 declare -gA ACTIVE_VMS=()
 declare -gA ACTIVE_CHAINS=()
@@ -514,30 +514,23 @@ else
 fi
 }
 
+#isRunning [vm]
+#Check whether the given VM is running according to our internal state.
+#returns: A zero exit code, if it is running and a nonzero exit code otherwise.
+function isRunning {
+local vm="$1"
+[ -n "${ACTIVE_VMS["$vm"]}" ] && [ ${ACTIVE_VMS["$vm"]} -eq 0 ]
+}
+
 #chainVMsAreRunning [chain id]
-#Check whether all VMs of the given chain are running.
+#Check whether all VMs of the given chain which are necessary to open it are running.
 #[chain id]: ID of a single chain.
 #returns: Sets a zero exit code, if all involved VMs are running and a non-zero exit code otherwise.
 function chainVMsAreRunning {
 local chain="$1"
 
-#check source VM
-local vm="${CHAINS2INFO["${chain}_source vm"]}"
-if [ -z "${ACTIVE_VMS["$vm"]}" ] || [ ${ACTIVE_VMS["$vm"]} -ne 0 ] ; then
-	return 1
-fi
-
-#check destination VMs
-local i=
-for ((i=1;;i++)) ; do
-	vm="${CHAINS2INFO["${chain}_destination vm $i"]}"
-	[ -z "$vm" ] && break
-
-	if [ -z "${ACTIVE_VMS["$vm"]}" ] || [ ${ACTIVE_VMS["$vm"]} -ne 0 ] ; then
-		return 1
-	fi
-done
-return 0
+#check source VM & final destination VM (all intermediaries are autostarted by qcrypt)
+isRunning "${CHAINS2INFO["${chain}_source vm"]}" && isRunning "${CHAINS2INFO["${chain}_final destination vm"]}"
 }
 
 #prepareChainOpen [chain id]
@@ -555,7 +548,7 @@ local srcMp="${CHAINS2INFO["${chain}_source mount point"]}"
 
 #special case: autostart enabled & source VM not running (yet)
 local ret=3
-if [[ ${CHAINS2INFO["${chain}_autostart"]} -eq 0 && ( -z ${ACTIVE_VMS["$srcVM"]} || ${ACTIVE_VMS["$srcVM"]} -ne 0 ) ]] ; then
+if [ ${CHAINS2INFO["${chain}_autostart"]} -eq 0 ] && ! isRunning "$srcVM" ; then
 	b_setBE 1
 	b_dom0_ensureRunning "$srcVM"
 	ret=$?
@@ -768,7 +761,7 @@ for chain in "$@" ; do
 		#only close chains whose final destination VM is down & warn the user about others
 		#Reason: The close would shut down the destination VM, but the user might still be working inside it.
 		local final="${CHAINS2INFO["${chain}_final destination vm"]}"
-		if qvm-check --running "$final" &> /dev/null ; then
+		if isRunning "$final" ; then
 			logError "The qcrypt chain $chain is not working anymore and should be closed. However it seems that the $final VM is still running."$'\n'"Please shut it down manually to fix the issue. qcryptd should close the chain afterwards." 0
 			continue
 		fi
@@ -965,7 +958,7 @@ case "$eventName" in
 	#     if Qubes OS ever gets some more details into its events, we could change that
 	"device-list-change:block")
 		#sometimes also triggered on shutdown
-			if [ "${ACTIVE_VMS["$vm"]}" -eq 0 ] ; then
+		if isRunning "$vm" ; then
 			#react
 			needsSuppression "$vm" "$eventName" "$timeSeconds" && return 0
 			echo "$SECONDS REACTION: Device attached or detached: $vm"
