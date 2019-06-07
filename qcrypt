@@ -755,6 +755,7 @@ for ((i=${#dsts[@]}-1;i >= 0;i--)) ; do
 			echo "Done."
 		else
 			if [ $shutdown -eq 0 ] ; then
+				#similar to what --force does, but we attempted to properly detach it before
 				echo -n "Failed, trying to shutdown... "
 				b_dom0_ensureHalted "$vm"
 				echo "Done."
