@@ -90,7 +90,7 @@ qcrypt close sys-usb /home/user/encrypted.lks secret.key mediator-vm work-vm
 ```
 
 *Explanation:*
-Close the chain. Please note that shutting down the `work-vm` without a close should be fine (you might have to use `qcrypt --force close` later on), but shutting down the `mediator-vm` during the attachment is likely to leave your Qubes OS in a dreary state and will probably require you to restart the system.
+Close the chain. Please note that shutting down the `work-vm` without a close should be fine (you might have to use `qcrypt --force close` later on, which may shut down the `mediator-vm`), but shutting down the `mediator-vm` during the attachment is likely to leave your Qubes OS in a dreary state and will probably require you to restart the system.
 
 ### qcryptd
 
@@ -117,6 +117,8 @@ read-only=false
 ```
 
 One could put that configuration e.g. inside the directory `/etc/qcryptd/example/med-work.ini` and could then start qcryptd with `qcryptd start example`.
+
+Please keep in mind that the `mediator-vm` may be started or stopped by qcryptd at will. So it is highly recommended to use it only for the purpose of that single chain.
 
 ### But I want to use passwords?!
 
