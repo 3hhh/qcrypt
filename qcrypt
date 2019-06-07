@@ -25,6 +25,7 @@ eval "$B_SCRIPT"
 b_import "args"
 b_import "traps"
 b_import "fs"
+b_import "arr"
 b_import "os/qubes4/dom0"
 
 #distinguish the B_E exit code from the "normal" error
@@ -64,7 +65,9 @@ For most threat models it should suffice to have 1-2 layers of encryption. Each 
 			 The identifier may only consist of numbers and characters.
 			 If you lose them, you lose all encrypted data. So better create a backup.
 
-[destination vm 1 .. n]	Layer of VMs to use for decryption in exactly that order. Each VM must have a matching decryption key.
+[destination vm 1 .. n]	 Layer of VMs to use for decryption in exactly that order. Each VM must have a matching decryption key.
+			 Recommendation: All destination VMs except of the final one should be dedicated to this particular qcrypt chain as
+			 qcrypt open/close may require to start or stop the VMs at will. Moreover it'll further increase the security level.
 
 [command] may be one of:
 
@@ -72,15 +75,16 @@ open
 	Map the [source file] in [source vm] to a device, attach it to [destination vm 1], then decrypt it there. Afterwards attach the result
 	to [destination vm 2], decrypt there and so on.
 
+	All VMs except for the source and final destination VM may be started automatically during the process.
+
 	Options:
-	-a		 Autostart all VMs required to be running for this operation (default: error out on stopped VMs).
+	-a		 Autostart all VMs required to be running for this operation (default: only autostart intermediate VMs).
 	--mp [path]	 After all layers of encryptions are decrypted in [vm n], attempt to mount the decrypted data to [path].
 			 Otherwise the plaintext device is not mounted.
 	--inj [vm] [key] Inject the given [key] (full path) from dom0 into the [vm] before opening. This can be useful for disposable VMs.
 			 The parameter can be specified multiple times. Won't override existing keys.
 	--type [name]	 The encryption container to use: plain|luks|loopaes|tcrypt, default: luks.
 	--ro		 Attach all involved devices in read-only mode (default: r/w).
-	--noclose	 Bypass the initial close. This may be dangerous if you don't know what you're doing.
 
 status
 	Check the online and decryption status of the [source vm], all intermediary VMs and the target VM. A non-zero status code indicates the
@@ -121,8 +125,9 @@ close
 	Options:
 	--sd		 Shut down any VMs preventing a successful close operation. This can be useful if the close operation fails due to
 			 Qubes OS or libxenlight errors.
-	--force		 Bypass any checks and attempt to close the given chain. This can for example be used if a previous detach only happened
-			 partially or you're very confident that you're doing everything correctly.
+	--force		 Bypass any checks and attempt to close the given chain. This should be used if a previous detach only happened partially
+			 or you shut down one of the involved VMs without closing before.
+			 Important: This may shut down all involved destination VMs.
 help
 	print this help"
 exit 1
@@ -137,7 +142,6 @@ local deps="head
 cryptsetup
 qvm-prefs
 qvm-block
-qvm-shutdown
 qvm-check
 losetup
 df
@@ -214,7 +218,7 @@ local cmd="${B_ARGS[0]}"
 
 case "$cmd" in
 	"open")
-		b_args_assertOptions "-a" "--mp" "--inj" "--type" "--ro" "--noclose"
+		b_args_assertOptions "-a" "--mp" "--inj" "--type" "--ro"
 		;;
 
 	"luksInit")
@@ -254,13 +258,51 @@ done
 return 0
 }
 
+#ensureClosed [source vm] [source file] [key id] [destination vm 1] ... [destination vm n]
+#Ensure that the given chain is fully closed (nothing attached anywhere, no open luks devices) and an open operation should succeed.
+#returns: Nothing, but calls [B_E](#B_E) on errors.
+#@B_E
+function ensureClosed {
+local state=""
+local ret=
+state="$(b_args_parse "status" "$@" ; statusSingleC)"
+ret=$?
+
+[[ "$state" == *"ERROR"* ]] && B_ERR="Failed to retrieve the chain state."$'\n'"$state" && B_E
+[ $ret -eq 0 ] && B_ERR="The chain is already open." && B_E
+local re='device mounted:[[:space:]]+no'
+[[ ! "$state" =~ $re ]] && B_ERR="The chain appears to be mounted. Overall state:"$'\n'"$state" && B_E
+
+#count "device attached: no" & "device decrypted: no"
+local reAttached='device attached:[[:space:]]+no'
+local reDecrypted='device decrypted:[[:space:]]+no'
+local devAttachedNoCnt=0
+local devDecryptedCnt=0
+
+local line=
+while IFS= read -r line ; do
+	if [[ "$line" =~ $reAttached ]] ; then
+		(( devAttachedNoCnt++ ))
+	elif [[ "$line" =~ $reDecrypted ]] ; then
+		(( devDecryptedCnt++ ))
+	fi
+done <<< "$state"
+
+local numDest=$(( $# - 3 ))
+if [ $devAttachedNoCnt -eq $numDest ] && [ $devDecryptedCnt -eq $numDest ] ; then
+	return 0
+else
+	B_ERR="The chain is partially open. Please --force close it first. Overall state:"$'\n'"$state"
+	B_E
+fi
+}
+
 #see open @usage
 #@B_E
 function openC {
 local mountPoint=""
 local encType="luks"
 local rwFlag=0
-local noClose=1
 local autostart=1
 declare -A injections
 
@@ -269,35 +311,41 @@ declare -A injections
 [ -n "${B_ARGS_OPTS["--mp_0"]+exists}" ] && mountPoint="${B_ARGS_OPTS["--mp_0"]}"
 [ -n "${B_ARGS_OPTS["--type_0"]+exists}" ] && encType="${B_ARGS_OPTS["--type_0"]}"
 [ -n "${B_ARGS_OPTS["--ro_0"]+exists}" ] && rwFlag=1
-[ -n "${B_ARGS_OPTS["--noclose_0"]+exists}" ] && noClose=0
+local sourceVM="${B_ARGS[1]}"
+local sourceFile="${B_ARGS[2]}"
+local keyId="${B_ARGS[3]}"
+declare -a dsts=("${B_ARGS[@]:4}")
 local i=0
 local sep="$(b_args_getOptionParamSeparator)"
 while [ -n "${B_ARGS_OPTS["--inj_$i"]+exists}" ] ; do
 	local pars="${B_ARGS_OPTS["--inj_$i"]}"
 	local injTarget="${pars%${sep}*}"
+	b_arr_contains "$injTarget" "${dsts[@]}" || { B_ERR="The injection VM $injTarget is not part of the destination VMs." ; B_E }
 	local injKey="${pars#*$sep}"
 	injections["$injTarget"]="$injKey"
 	[ -f "$injKey" ] || { B_ERR="No file: $injKey" ; B_E }
 	i=$(($i +1))
 done
 
-local sourceVM="${B_ARGS[1]}"
-local sourceFile="${B_ARGS[2]}"
-local keyId="${B_ARGS[3]}"
-declare -a dsts=("${B_ARGS[@]:4}")
+#make sure that the open doesn't f*ck things up
+b_info "Checking whether the chain is fully closed..."
+ensureClosed "$sourceVM" "$sourceFile" "$keyId" "${dsts[@]}"
 
 #start all necessary VMs or check that they are running
-[ $autostart -eq 0 ] && b_dom0_ensureRunning "$sourceVM" "${dsts[@]}" "${!injections[@]}" || b_dom0_isRunning "$sourceVM" "${dsts[@]}" "${!injections[@]}"
-
-#close old chains
-if [ $noClose -ne 0 ] ; then
-	b_info "Closing first to make sure we don't run into strange errors..."
-	b_args_parse "--force" "close" "${B_ARGS[@]:1}"
-	closeC
-	#b_args_parse "$@"
-	echo ""
+if [ $autostart -eq 0 ] ; then
+	echo -n "INFO: Starting all VMs..."
+	b_dom0_ensureRunning "$sourceVM" "${dsts[@]}"
+	echo "Done."
+else
+	#check source & dest and only autostart intermediate VMs
+	b_dom0_isRunning "$sourceVM" "${dsts[-1]}"
+	declare -a interm=("${dsts[@]::${#dsts[@]}-1}")
+	if [ ${#interm[@]} -gt 0 ] ; then
+		echo -n "INFO: Starting intermediate VMs..."
+		b_dom0_ensureRunning "${interm[@]}"
+		echo "Done."
+	fi
 fi
-#NOTE: the arguments may not be available anymore from B_ARGS & B_ARGS_OPTS here!
 
 #create a source device if needed
 b_info "Preparing the source VM ${sourceVM}..."
@@ -596,31 +644,42 @@ cryptsetup close $mapperNameEsc || exit 22
 exit 0
 }
 
-#see close @usage
+#closeSourceLoop [source vm] [source file]
 #@B_E
-function closeC {
-local shutdown=1
-local force=1
+function closeSourceLoop {
+local sourceVM="$1"
+local sourceFile="$2"
+local ret=
 
-#parse params
-[ -n "${B_ARGS_OPTS["--sd_0"]+exists}" ] && shutdown=0
-[ -n "${B_ARGS_OPTS["--force_0"]+exists}" ] && force=0
-
-local sourceVM="${B_ARGS[1]}"
-local sourceFile="${B_ARGS[2]}"
-local keyId="${B_ARGS[3]}"
-declare -a dsts=("${B_ARGS[@]:4}")
-
-#make sure the given chain is valid by checking its status
-#NOTE: we also check that the chain is mounted as it might otherwise be incomplete (missing target VM) and we don't want a partial closure
-if [ $force -ne 0 ] ; then
-	echo -n "INFO: Checking the validity of the chain... "
-	local state=""
-	b_args_parse "status" "$sourceVM" "$sourceFile" "$keyId" "${dsts[@]}"
-	state="$(statusSingleC)" || { B_ERR="The chain has a bad status - check it below. If you want to continue nonetheless, use --force."$'\n'"$state" ; B_E }
-	echo "Done. All good."
+echo -n "INFO: Closing the loop device inside $sourceVM... "
+b_setBE 1
+b_dom0_execFuncIn "$sourceVM" "" "detachLoop" "$sourceFile" &> /dev/null
+ret=$?
+b_resetErrorHandler
+if [ $ret -eq 17 ] ; then
+	echo "No loop device found. All good."
+elif [ $ret -eq 0 ] ; then
+	echo "Done."
+else
+	#last action, no need for force
+	B_ERR="Failed to close."
+	B_E
 fi
-#NOTE: the arguments may not be available anymore from B_ARGS & B_ARGS_OPTS here!
+return 0
+}
+
+#cleanClose [force flag] [shutdown flag] [source VM] [source file] [key id] [destination 1] ... [destination n]
+#Attempt to perform a "clean" close without shutting down any VMs.
+#returns: Exits with a zero status code if and only if all remnants on all VMs were detached.
+#@B_E
+function cleanClose {
+local force="$1" #currently cannot be 0
+local shutdown="$2"
+local sourceVM="$3"
+local sourceFile="$4"
+local keyId="$5"
+shift 5
+declare -a dsts=("$@")
 
 #NOTE: we use the key ID as luks mapper name
 local mapperName="$keyId"
@@ -697,8 +756,7 @@ for ((i=${#dsts[@]}-1;i >= 0;i--)) ; do
 		else
 			if [ $shutdown -eq 0 ] ; then
 				echo -n "Failed, trying to shutdown... "
-				qvm-shutdown --wait --timeout 30 "$vm"
-				qvm-check --running "$vm" &> /dev/null && B_ERR="Failed to shutdown the VM $vm." && B_E
+				b_dom0_ensureHalted "$vm"
 				echo "Done."
 			else
 				err="Failed to detach the backend $backend from the VM $vm. No point in proceeding."
@@ -708,24 +766,76 @@ for ((i=${#dsts[@]}-1;i >= 0;i--)) ; do
 	fi
 done
 
-#remove the loop device inside the source VM
-echo -n "INFO: Closing the loop device inside $sourceVM... "
-b_setBE 1
-b_dom0_execFuncIn "$sourceVM" "" "detachLoop" "$sourceFile" &> /dev/null
-ret=$?
-b_resetErrorHandler
-if [ $ret -eq 17 ] ; then
-	echo "No loop device found. All good."
-elif [ $ret -eq 0 ] ; then
+closeSourceLoop "$sourceVM" "$sourceFile"
+
+[ -z "$err" ]
+}
+
+#dirtyClose [source VM] [source file] [key id] [destination 1] ... [destination n]
+#Attempt to perform a "dirty" close by simply shutting down all destination VMs.
+#returns: Exits with a zero status code if and only if all remnants on all VMs were detached.
+#@B_E
+function dirtyClose {
+local sourceVM="$1"
+local sourceFile="$2"
+local keyId="$3"
+shift 3
+declare -a dsts=("$@")
+
+local i=
+for ((i=${#dsts[@]}-1;i >= 0;i--)) ; do
+	local vm="${dsts[$i]}"
+	#NOTES:
+	# - using qvm-block in any way is likely to trigger Qubes OS bug #4784
+	# - we better shut down one after another as this will give Qubes OS some time to do the device detach cleanup (and in order)
+	echo -n "INFO: Shutting down the VM ${vm}... "
+	b_dom0_ensureHalted "$vm"
+
+	#give Qubes OS some time to clean up the mess (i.e. do the detach)
+	sleep 0.2
 	echo "Done."
+done
+
+closeSourceLoop "$sourceVM" "$sourceFile"
+
+return 0
+}
+
+#see close @usage
+#@B_E
+function closeC {
+local force=1
+local shutdown=1
+
+#parse params
+[ -n "${B_ARGS_OPTS["--force_0"]+exists}" ] && force=0
+[ -n "${B_ARGS_OPTS["--sd_0"]+exists}" ] && shutdown=0
+
+local sourceVM="${B_ARGS[1]}"
+local sourceFile="${B_ARGS[2]}"
+local keyId="${B_ARGS[3]}"
+declare -a dsts=("${B_ARGS[@]:4}")
+
+local allUp=
+#make sure the given chain is valid by checking its status
+#NOTE: we also check that the chain is mounted as it might otherwise be incomplete (missing target VM) and we don't want a partial closure
+if [ $force -ne 0 ] ; then
+	echo -n "INFO: Checking the validity of the chain... "
+	local state=""
+	state="$(b_args_parse "status" "$sourceVM" "$sourceFile" "$keyId" "${dsts[@]}" ; statusSingleC)" || { B_ERR="The chain has a bad status - check it below. If you want to continue nonetheless, use --force."$'\n'"$state" ; B_E }
+	echo "Done. All good."
+	cleanClose "$force" "$shutdown" "$sourceVM" "$sourceFile" "$keyId" "${dsts[@]}"
 else
-	#last action, no need for force
-	B_ERR="Failed to close."
-	B_E
+	b_info "Force mode. Thus attempting a dirty close..."
+	# Reasoning: Qubes OS bug #4784 (https://github.com/QubesOS/qubes-issues/issues/4784) will make the system unusable until the next reboot, if any of the destination VMs are shut down and the above "clean" close is attempted afterwards.
+	# Available workarounds:
+	#  1. Never close and re-use the leftover open devices from previous qcrypt open operations. <-- not chosen
+	#  2. Perform the below "dirty" close by shutting down all destination VMs _without_ using qvm-block at all. This prevents bug #4784 from being triggered as of Qubes OS 4.0.1. <-- chosen
+	dirtyClose "$sourceVM" "$sourceFile" "$keyId" "${dsts[@]}"
 fi
 
 b_info "Close done."
-[ -z "$err" ]
+return $ret
 }
 
 #detachLoop [file]

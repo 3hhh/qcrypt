@@ -27,6 +27,14 @@ function setupQcryptTesting {
 
 	#re-use the same VMs for all tests, use fresh ones if some test kills them
 	loadBlibTestState
+	recreateTestVMsIfNeeded
+	echo "QCRYPT_VM_1 = ${TEST_STATE["QCRYPT_VM_1"]}"
+	echo "QCRYPT_VM_2 = ${TEST_STATE["QCRYPT_VM_2"]}"
+	echo "UTD_QUBES_TESTVM = $UTD_QUBES_TESTVM"
+}
+
+#recreateTestVMsIfNeeded
+function recreateTestVMsIfNeeded {
 	if [ -z "${TEST_STATE["QCRYPT_VM_1"]}" ] || ! qvm-check --running "${TEST_STATE["QCRYPT_VM_1"]}" &> /dev/null ; then
 		TEST_STATE["QCRYPT_VM_1"]="$(b_dom0_startDispVM "$UTD_QUBES_DISPVM_TEMPLATE")"
 		saveBlibTestState
@@ -35,9 +43,6 @@ function setupQcryptTesting {
 		TEST_STATE["QCRYPT_VM_2"]="$(b_dom0_startDispVM "$UTD_QUBES_DISPVM_TEMPLATE")"
 		saveBlibTestState
 	fi
-	echo "QCRYPT_VM_1 = ${TEST_STATE["QCRYPT_VM_1"]}"
-	echo "QCRYPT_VM_2 = ${TEST_STATE["QCRYPT_VM_2"]}"
-	echo "UTD_QUBES_TESTVM = $UTD_QUBES_TESTVM"
 }
 
 function skipIfNotRoot {

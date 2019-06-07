@@ -249,6 +249,27 @@ function postInitChecks {
 	rm -rf "$bak" "$bak2" "$wd"
 }
 
+#runForceClose [source VM] [source file] [key id] [destination vm 1] ... [destination vm n]
+#Runs a qcrypt --force close for the given chain and takes care of the test VM management as the destination VMs are shut down during the process.
+function runForceClose {
+	runSL "$QCRYPT" close --force -- "$@"
+	echo "$output"
+	[ $status -eq 0 ]
+	[[ "$output" != *"ERROR"* ]]
+	[[ "$output" == *"Close done."* ]]
+
+	shift 3
+	local vm=
+	for vm in "$@" ; do
+		runSL b_dom0_isHalted "$vm"
+		[ $status -eq 0 ]
+		[ -z "$output" ]
+		[[ "$vm" == "$UTD_QUBES_TESTVM" ]] && b_dom0_ensureRunning "$UTD_QUBES_TESTVM"
+	done
+
+	recreateTestVMsIfNeeded
+}
+
 @test "open (have another coffee...)" {
 	#NOTE: luksInit didn't necessarily run, if we're not root --> we cannot depend on it (that's also why open & close are tested there as well)
 	local fixturePath="$(getFixturePath "1layer01")"
@@ -265,6 +286,9 @@ function postInitChecks {
 	echo "$output"
 	[ $status -ne 0 ]
 	[[ "$output" == *"ERROR"* ]]
+
+	#currently the missing key test will at least try to open, i.e. we need to close the now partially open chain
+	runForceClose "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/1layer01" "1layer01" "${TEST_STATE["QCRYPT_VM_2"]}"
 
 	#missing source container
 	runSL "$QCRYPT" open --inj "${TEST_STATE["QCRYPT_VM_2"]}" "$fixturePath/keys/target" --mp "/mnt" -- "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/nonexisting" "1layer01" "${TEST_STATE["QCRYPT_VM_2"]}"
@@ -478,38 +502,28 @@ function testFailStatus {
 	postCloseChecks 0 "/mnt" "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/1layer01" "1layer01" "${TEST_STATE["QCRYPT_VM_2"]}"
 
 	#partial closes shouldn't work
-	runSL "$QCRYPT" close --sd -- "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/2layer01" "2layer01" "${TEST_STATE["QCRYPT_VM_2"]}"
+	runSL "$QCRYPT" close -- "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/2layer01" "2layer01" "${TEST_STATE["QCRYPT_VM_2"]}"
 	echo "$output"
 	[ $status -ne 0 ]
 	[[ "$output" == *"ERROR"* ]]
 
-	runSL "$QCRYPT" close --sd -- "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/2layer01" "2layer01" "$UTD_QUBES_TESTVM"
+	runSL "$QCRYPT" close -- "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/2layer01" "2layer01" "$UTD_QUBES_TESTVM"
 	echo "$output"
 	[ $status -ne 0 ]
 	[[ "$output" == *"ERROR"* ]]
 
-	runSL "$QCRYPT" close --sd -- "${TEST_STATE["QCRYPT_VM_2"]}" "/tmp/2layer01" "2layer01" "$UTD_QUBES_TESTVM"
+	runSL "$QCRYPT" close -- "${TEST_STATE["QCRYPT_VM_2"]}" "/tmp/2layer01" "2layer01" "$UTD_QUBES_TESTVM"
 	echo "$output"
 	[ $status -ne 0 ]
 	[[ "$output" == *"ERROR"* ]]
 
-	#for some reason this currently requires --sd (which is strange since it works @luksInit): otherwise I keep getting a libxenlight error
 	#we need --force because it was partially closed by the status test
-	#TODO: identify the root cause
-	runSL "$QCRYPT" close --force --sd -- "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/2layer01" "2layer01" "${TEST_STATE["QCRYPT_VM_2"]}" "$UTD_QUBES_TESTVM"
-	echo "$output"
-	[ $status -eq 0 ]
-	[[ "$output" == *"Close done."* ]]
-	[[ "$output" != *"ERROR"* ]]
-	
-	#sleep 2
-	#if qvm-check --running "${TEST_STATE["QCRYPT_VM_1"]}" && qvm-check --running "${TEST_STATE["QCRYPT_VM_2"]}" && qvm-check --running "$UTD_QUBES_TESTVM" ; then
-	#	postCloseChecks 0 "/mnt" "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/2layer01" "2layer01" "${TEST_STATE["QCRYPT_VM_2"]}" "$UTD_QUBES_TESTVM"
-	#fi
+	runForceClose "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/2layer01" "2layer01" "${TEST_STATE["QCRYPT_VM_2"]}" "$UTD_QUBES_TESTVM"
 }
 
 @test "partial close (VM down)" {
 	#this deserves an extra test as it is _very_ important for qcryptd
+	#maybe TODO: test with 2 layers; especially since that tends to trigger Qubes OS bug #4784
 
 	#open, this time VM_2 as source --> VM_1
 	copyFixture "1layer01" "${TEST_STATE["QCRYPT_VM_2"]}"
@@ -532,14 +546,10 @@ function testFailStatus {
 	[[ "$output" != *"ERROR"* ]]
 
 	#partial close should work
-	#(status will be nonzero though as the close is only partial)
-	runSL "$QCRYPT" close --force -- "${TEST_STATE["QCRYPT_VM_2"]}" "/tmp/1layer01" "1layer01" "${TEST_STATE["QCRYPT_VM_1"]}"
-	echo "$output"
-	[ $status -ne 0 ]
-	[[ "$output" == *"Close done."* ]]
-	[[ "$output" != *"ERROR"* ]]
+	runForceClose "${TEST_STATE["QCRYPT_VM_2"]}" "/tmp/1layer01" "1layer01" "${TEST_STATE["QCRYPT_VM_1"]}"
 
-	testFailStatus 6 1 -- "${TEST_STATE["QCRYPT_VM_2"]}" "/tmp/1layer01" "1layer01" "${TEST_STATE["QCRYPT_VM_1"]}"
+	#NOTE: ${TEST_STATE["QCRYPT_VM_1"]} is now another one...
+	testFailStatus 5 1 -- "${TEST_STATE["QCRYPT_VM_2"]}" "/tmp/1layer01" "1layer01" "${TEST_STATE["QCRYPT_VM_1"]}"
 	[[ "$output" != *"ERROR"* ]]
 }
 
