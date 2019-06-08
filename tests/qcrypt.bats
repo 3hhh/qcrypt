@@ -546,9 +546,13 @@ function testFailStatus {
 	[[ "$output" != *"ERROR"* ]]
 
 	#partial close should work
+	local old1="${TEST_STATE["QCRYPT_VM_1"]}"
+	local old2="${TEST_STATE["QCRYPT_VM_2"]}"
 	runForceClose "${TEST_STATE["QCRYPT_VM_2"]}" "/tmp/1layer01" "1layer01" "${TEST_STATE["QCRYPT_VM_1"]}"
 
 	#NOTE: ${TEST_STATE["QCRYPT_VM_1"]} is now another one...
+	[[ "${TEST_STATE["QCRYPT_VM_1"]}" != "$old1" ]]
+	[[ "${TEST_STATE["QCRYPT_VM_2"]}" == "$old2" ]]
 	testFailStatus 5 1 -- "${TEST_STATE["QCRYPT_VM_2"]}" "/tmp/1layer01" "1layer01" "${TEST_STATE["QCRYPT_VM_1"]}"
 	[[ "$output" != *"ERROR"* ]]
 }
