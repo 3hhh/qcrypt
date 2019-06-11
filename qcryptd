@@ -937,11 +937,9 @@ case "$eventName" in
 	"device-list-change:block")
 		#NOTE: we delay those events by 1-2s as they tend to occur together with VM shutdown events, but usually _before_ these; however since the VM shutdown is more relevant for us, we want to know about it first
 		local ts=$(( $timeSeconds +2 ))
-		if [ -z "$(b_delay_getCommandAt "$ts")" ] ; then
-			local cmd=
-			printf -v cmd 'handleQubesEvent %q %q %q %q' "$vm" "$eventName" "$eventInfo" "$timeSeconds"
-			b_delay_to "$ts" "$cmd"
-		fi
+		local cmd=
+		printf -v cmd 'handleQubesEvent %q %q %q %q' "$vm" "$eventName" "$eventInfo" "$timeSeconds"
+		b_delay_to "$ts" "$cmd"
 		;;
 	#heartbeat event
 	"heartbeat")
