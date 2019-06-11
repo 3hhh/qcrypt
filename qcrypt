@@ -333,7 +333,7 @@ ensureClosed "$sourceVM" "$sourceFile" "$keyId" "${dsts[@]}"
 
 #start all necessary VMs or check that they are running
 if [ $autostart -eq 0 ] ; then
-	echo -n "INFO: Starting all VMs..."
+	echo -n "INFO: Starting all VMs... "
 	b_dom0_ensureRunning "$sourceVM" "${dsts[@]}"
 	echo "Done."
 else
@@ -341,7 +341,7 @@ else
 	b_dom0_isRunning "$sourceVM" "${dsts[-1]}"
 	declare -a interm=("${dsts[@]::${#dsts[@]}-1}")
 	if [ ${#interm[@]} -gt 0 ] ; then
-		echo -n "INFO: Starting intermediate VMs..."
+		echo -n "INFO: Starting intermediate VMs... "
 		b_dom0_ensureRunning "${interm[@]}"
 		echo "Done."
 	fi
