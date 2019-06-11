@@ -161,6 +161,7 @@ exit 1
 #@B_E
 function checkDependencies {
 local deps="sort
+date
 qvm-ls
 qvm-check"
 b_checkDeps "$deps" || { B_ERR="Not all required dependencies to run $B_SCRIPT_NAME are installed." ; B_E }
@@ -921,7 +922,7 @@ local timeSeconds="${4:0:10}"
 #init if necessary
 #NOTE: some things require initialization _in_ the event loop as we might otherwise lose events in the meantime
 if [ $DAEMON_INIT_DONE -ne 0 ] ; then
-	logInfo "Initializing..."
+	logInfo "$(date) Initializing..."
 	initializeActiveVMs
 	initializeActiveChains
 	openChains 1 "${CHAINS[@]}"
@@ -1033,7 +1034,7 @@ else
 fi
 
 waitForBackgroundProcesses
-logInfo "Stopped."
+logInfo "$(date) Stopped."
 }
 
 function initTraps {
