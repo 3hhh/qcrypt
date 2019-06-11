@@ -717,12 +717,24 @@ done <<< "$chains"
 openChains 1 "${toOpen[@]}"
 }
 
-#closeSingleChain [chain id]
+#closeSingleChain [chain id] [force flag]
 #Close a single chain in the foreground. Helper function for [closeChains](#closeChains), which must be used over this one.
 #returns: An exit code of 0, if and only if the chain was successfully closed.
 #@B_E
 function closeSingleChain {
 local chain="$1"
+local forceFlag="${2:-1}"
+
+if [ $forceFlag -ne 0 ] ; then
+	#only close chains whose final destination VM is down & warn the user about others
+	#Reason: The close would shut down the destination VM, but the user might still be working inside it.
+	#we double check with qvm-check as multiple VMs may have been shut down at the same time and we received only the first few events so far
+	local final="${CHAINS2INFO["${chain}_final destination vm"]}"
+	if isRunning "$final" && sleep 2 && qvm-check --running "$final" &> /dev/null ; then
+		logError "The qcrypt chain $chain is not working anymore and should be closed. However it seems that the $final VM is still running."$'\n'"Please shut it down manually to fix the issue. qcryptd should close the chain afterwards." 0
+		exit 3
+	fi
+fi
 
 #make sure previous operations are completed
 local release=
@@ -747,34 +759,23 @@ return 0
 }
 
 #closeChains [force flag] [wait flag] [chain id 1] ... [chain id n]
-#[force flag]: Force a close attempt regardless of the current state. May shut down VMs.
-#[wait flag]: If set to 0, wait for on-going chain status changes possibly affecting our decision to close a chain.
+#[force flag]: Force a close attempt regardless of the current state. May shut down VMs. Default: 1
+#[wait flag]: If set to 0, wait for on-going chain status changes possibly affecting our decision to close a chain. Default: 1
 #returns: Nothing.
 function closeChains {
-local forceFlag="$1"
-local waitFlag="$2"
+local forceFlag="${1:-1}"
+local waitFlag="${2:-1}"
 shift 2
 
 local chain=
 for chain in "$@" ; do
-	if [ $forceFlag -ne 0 ] ; then
-		#filter inactive chains
-		! isActive "$chain" "$waitFlag" && continue
-	
-		#only close chains whose final destination VM is down & warn the user about others
-		#Reason: The close would shut down the destination VM, but the user might still be working inside it.
-		#we double check with qvm-check as multiple VMs may have been shut down at the same time and we received only the first few events so far
-		local final="${CHAINS2INFO["${chain}_final destination vm"]}"
-		if isRunning "$final" && qvm-check --running "$final" &> /dev/null ; then
-			logError "The qcrypt chain $chain is not working anymore and should be closed. However it seems that the $final VM is still running."$'\n'"Please shut it down manually to fix the issue. qcryptd should close the chain afterwards." 0
-			continue
-		fi
-	fi
+	#filter inactive chains
+	[ $forceFlag -ne 0 ] && ! isActive "$chain" "$waitFlag" && continue
 
 	#close in background
 	#NOTE: this will shut down _ALL_ destination VMs in that chain
 	logInfo "Attempting to close the chain $chain..."
-	closeSingleChain "$chain" < /dev/null &
+	closeSingleChain "$chain" "$forceFlag" < /dev/null &
 
 	#NOTE: we do _not_ wait for the close as we don't really care about the outcome: the next open attempt will also try another close beforehand & partial closes return a non-zero exit code anyway
 	#the next open however will wait for the last close and another overlapping close is not possible since the chain is now marked inactive
