@@ -427,7 +427,7 @@ echo g
 	[ $status -eq 0 ]
 	echo "created loop device: ${TEST_STATE["QCRYPT_VM_2"]}:$output"
 	[[ "$output" == "/dev/loop0" ]]
-	sleep 5
+	sleep 7
 	checkTestChains 1 1 1
 
 	#shutting down the destination VM should cause the chain to get closed

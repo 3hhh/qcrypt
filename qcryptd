@@ -3,7 +3,7 @@
 #See usage().
 #
 #Copyright (C) 2019  David Hobach  GPLv3
-#version: 0.7
+#version: 0.8
 #
 #This program is free software: you can redistribute it and/or modify
 #it under the terms of the GNU General Public License as published by
@@ -28,6 +28,7 @@ b_import "daemon"
 b_import "proc"
 b_import "ini"
 b_import "fs"
+b_import "delay"
 b_import "multithreading/mtx"
 b_import "os/qubes4/dom0"
 
@@ -83,7 +84,7 @@ declare -gA VMS2CHAINS=()
 declare -gA ACTIVE_VMS=()
 declare -gA ACTIVE_CHAINS=()
 
-#helper maps for onQubesEvent 
+#helper maps for handleQubesEvent
 #LAST_ATTACHED: stores events and their times related to device attachments
 #SUPPRESSION: used to suppress the same event occurring in a very short time
 declare -gA LAST_ATTACHED=()
@@ -908,10 +909,12 @@ echo ""
 function onQubesEvent {
 local vm="$1"
 local eventName="$2"
-#local eventInfo="$3"
+local eventInfo="$3"
 local timeSeconds="${4:0:10}"
 
 [ $PROCESS_EVENTS -ne 0 ] && return $PROCESS_EVENTS
+
+#NOTE: We only do some pre-filtering and delaying here and leave the handling to [handleQubesEvent](#handleQubesEvent).
 
 #init if necessary
 #NOTE: some things require initialization _in_ the event loop as we might otherwise lose events in the meantime
@@ -925,6 +928,36 @@ if [ $DAEMON_INIT_DONE -ne 0 ] ; then
 	[ $DEBUG -eq 0 ] && logState
 	DAEMON_INIT_DONE=0
 fi
+
+case "$eventName" in
+	#device attach or detach
+	"device-list-change:block")
+		#NOTE: we delay those events by 1-2s as they tend to occur together with VM shutdown events, but usually _before_ these; however since the VM shutdown is more relevant for us, we want to know about it first
+		local ts=$(( $timeSeconds +2 ))
+		if [ -z "$(b_delay_getCommandAt "$ts")" ] ; then
+			local cmd=
+			printf -v cmd 'handleQubesEvent %q %q %q %q' "$vm" "$eventName" "$eventInfo" "$timeSeconds"
+			b_delay_to "$ts" "$cmd"
+		fi
+		;;
+	#heartbeat event
+	"heartbeat")
+		b_delay_execute "$timeSeconds" || return $?
+		;;
+	*)
+		handleQubesEvent "$vm" "$eventName" "$eventInfo" "$timeSeconds" || return $?
+esac
+
+return 0
+}
+
+#+handleQubesEvent [subject] [event name] [event info] [timestamp in seconds]
+#+Handles Qubes events for [onQubesEvent](#onQubesEvent).
+#+returns: Nothing.
+function handleQubesEvent {
+local vm="$1"
+local eventName="$2"
+local timeSeconds="$4"
 
 #handle the current event
 case "$eventName" in
@@ -1074,7 +1107,7 @@ b_setErrorHandler "loggingDaemonErrorHandler"
 initTraps
 logInfo "Starting..."
 parseConfigFiles "$CONF_TARGET"
-b_dom0_enterEventLoop "onQubesEvent"
+b_dom0_enterEventLoop "onQubesEvent" 1000
 }
 
 #assertValidTarget
