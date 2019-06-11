@@ -161,7 +161,8 @@ exit 1
 #@B_E
 function checkDependencies {
 local deps="sort
-qvm-ls"
+qvm-ls
+qvm-check"
 b_checkDeps "$deps" || { B_ERR="Not all required dependencies to run $B_SCRIPT_NAME are installed." ; B_E }
 }
 
@@ -761,8 +762,9 @@ for chain in "$@" ; do
 	
 		#only close chains whose final destination VM is down & warn the user about others
 		#Reason: The close would shut down the destination VM, but the user might still be working inside it.
+		#we double check with qvm-check as multiple VMs may have been shut down at the same time and we received only the first few events so far
 		local final="${CHAINS2INFO["${chain}_final destination vm"]}"
-		if isRunning "$final" ; then
+		if isRunning "$final" && qvm-check --running "$final" &> /dev/null ; then
 			logError "The qcrypt chain $chain is not working anymore and should be closed. However it seems that the $final VM is still running."$'\n'"Please shut it down manually to fix the issue. qcryptd should close the chain afterwards." 0
 			continue
 		fi
