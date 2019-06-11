@@ -583,16 +583,19 @@ else
 fi
 }
 
-#updateChainState [chain] [wait flag]
+#updateChainState [chain] [operation] [wait flag]
 #Updates the ACTIVE_CHAINS array for the given chain with the latest information available.
+#[operation]: 1=open, 0=close
 #[wait flag]: If set to 0, even wait for on-going operations to complete (default: 1).
 #returns: Nothing.
 function updateChainState {
 local chain="$1"
-local waitFlag="${2:-1}"
+local op="$2"
+local waitFlag="${3:-1}"
 local ret=
 
-local pid="${CHAINS2INFO["${chain}_last open pid"]}"
+local pid=
+[ $op -eq 1 ] && pid="${CHAINS2INFO["${chain}_last open pid"]}" || pid="${CHAINS2INFO["${chain}_last close pid"]}"
 [ -z "$pid" ] && return 0
 
 if [ $waitFlag -ne 0 ] ; then
@@ -601,13 +604,13 @@ if [ $waitFlag -ne 0 ] ; then
 fi
 
 if wait "$pid" ; then
-	#we thought the chain open anyway --> nothing to do (especially since we might have closed in the meantime)
+	#we thought the chain open/closed anyway --> nothing to do (especially since we might have closed in the meantime)
 	:
 else
-	#the last chain open failed --> update the internal state
-	ACTIVE_CHAINS["$chain"]=1
+	#the last chain open/close failed --> update the internal state
+	ACTIVE_CHAINS["$chain"]=$op
 fi
-CHAINS2INFO["${chain}_last open pid"]=""
+[ $op -eq 1 ] && CHAINS2INFO["${chain}_last open pid"]="" || CHAINS2INFO["${chain}_last close pid"]=""
 
 return 0
 }
@@ -620,7 +623,8 @@ return 0
 function isActive {
 local chain="$1"
 local waitFlag="$2"
-updateChainState "$chain" "$waitFlag"
+updateChainState "$chain" 0 "$waitFlag"
+updateChainState "$chain" 1 "$waitFlag"
 [ -n "${ACTIVE_CHAINS["$chain"]}" ] && [ ${ACTIVE_CHAINS["$chain"]} -eq 0 ]
 }
 
@@ -777,8 +781,7 @@ for chain in "$@" ; do
 	logInfo "Attempting to close the chain $chain..."
 	closeSingleChain "$chain" "$forceFlag" < /dev/null &
 
-	#NOTE: we do _not_ wait for the close as we don't really care about the outcome: the next open attempt will also try another close beforehand & partial closes return a non-zero exit code anyway
-	#the next open however will wait for the last close and another overlapping close is not possible since the chain is now marked inactive
+	#NOTE: the next open will wait for the last close and another overlapping close is not possible since the chain is now marked inactive
 	CHAINS2INFO["${chain}_last close"]="$SECONDS"
 	CHAINS2INFO["${chain}_last close pid"]="$!"
 	ACTIVE_CHAINS["$chain"]=1
