@@ -50,10 +50,10 @@ You're installing something to dom0 after all.
 
 ### qcrypt
 
-`qcrypt luksInit` can be used to create new chains whose content is stored in encrypted form inside the source file in the respective source VM. The initial creation however happens in dom0; keys and the encrypted container are automatically passed to the respective VMs in the chain.
+`qcrypt luksInit` can be used to create new chains whose content is stored in encrypted form inside the source file in the respective source VM. The initial creation however happens in dom0; keys and the encrypted container are automatically passed to the respective VMs in the chain.  
 **Warning**: Keep a backup of all encryption keys in the chain unless you're ready to lose your encrypted data.
 
-Chains can then be opened via `qcrypt open` and their current attachment state can be observed with `qcrypt status`. Without command-line arguments, the latter also provides an overview of all currently active qcrypt chains.
+Chains can then be opened via `qcrypt open` and their current attachment state can be observed with `qcrypt status`. Without command-line arguments, the latter also provides an overview of all currently active qcrypt chains.  
 **Warning**: Unexpected shutdowns of VMs belonging to a chain may lead to data loss under extreme circumstances. In practice this rarely happens, but you should be prepared and have a backup available.
 
 `qcrypt close` will let you close currently active chains.
@@ -94,7 +94,7 @@ Close the chain. Please note that shutting down the `work-vm` without a close sh
 
 ### qcryptd
 
-In order to manage new chains initialized with `qcrypt luksInit` or previously unmanaged chains with `qcryptd`, you'll have to create one ini configuration file per chain inside the `[qcrypt(d) installation directory]/conf/default` folder. An example ini file can be found at [TODO](TODO).
+In order to manage new chains initialized with `qcrypt luksInit` or previously unmanaged chains with `qcryptd`, you'll have to create one ini configuration file per chain inside the `[qcrypt(d) installation directory]/conf/default` folder. An example ini file can be found [here](https://github.com/3hhh/qcrypt/blob/master/conf/examples/ex01.ini).
 
 It is then recommended to check that configuration with `qcryptd check`. Assuming your configuration was found to be correct, you can start the qcryptd service with `qcryptd start` and further control it with `qcryptd stop` and `qcryptd restart`. Configuration file changes require a `qcryptd -c restart`.
 
