@@ -58,18 +58,18 @@ Chains can then be opened via `qcrypt open` and their current attachment state c
 
 `qcrypt close` will let you close currently active chains.
 
-Please consult `qcrypt help` for further details.
+Please consult `qcrypt help` after the installation for further details.
 
 #### Examples
 
 ```
-qcrypt --size 3G --wd ~/qcrypt.tmp/ --bak ~/qcrypt.keys/ luksInit sys-usb /home/user/encrypted.lks secret.key mediator-vm work-vm
+sudo qcrypt -a --size 3G --wd ~/qcrypt.tmp/ --bak ~/qcrypt.keys/ luksInit sys-usb /home/user/encrypted.lks secret.key mediator-vm work-vm
 ```
 
 *Explanation:*
-Create a 3 Gigabyte container inside the `sys-usb` VM at `/home/user/encrypted.lks`. The encryption keys shall be named `secret.key` (you'll find two different keys with the same name inside `~/.qcrypt/keys/` in the `mediator-vm`as well as the `work-vm`), the first layer of decryption happen inside the `mediator-vm` and the second inside the `work-vm`. Only the `work-vm` is meant to see the plaintext data.
+Autostart all required VMs and create a 3 Gigabyte container inside the `sys-usb` VM at `/home/user/encrypted.lks` (make sure you `sys-usb` has enough empty disk space). The encryption keys shall be named `secret.key` (you'll find two different keys with the same name inside `~/.qcrypt/keys/` in the `mediator-vm` as well as the `work-vm`), the first layer of decryption happen inside the `mediator-vm` and the second inside the `work-vm`. Only the `work-vm` is meant to see the plaintext data.
 Moreover create a backup of all involved keys in dom0 inside the `~/qcrypt.keys/` directory and use `~/qcrypt.tmp/` to generate the encryption container and keys in dom0.
-The current example has two destination VMs, but leaving out the `mediator-vm` can be appropriate (it depends on your threat model). Please consult `qcrypt help` for further explanations.
+The current example has two destination VMs, but leaving out the `mediator-vm` can be appropriate - it depends on your threat model. Please consult `qcrypt help` after the installation for further explanations.
 
 ```
 qcrypt --mp /mnt/ open sys-usb /home/user/encrypted.lks secret.key mediator-vm work-vm
@@ -94,11 +94,11 @@ Close the chain. Please note that shutting down the `work-vm` without a close sh
 
 ### qcryptd
 
-In order to manage new chains initialized with `qcrypt luksInit` or previously unmanaged chains with `qcryptd`, you'll have to create one ini configuration file per chain inside the `[qcrypt(d) installation directory]/conf/default` folder. An example ini file can be found [here](https://github.com/3hhh/qcrypt/blob/master/conf/examples/ex01.ini).
+In order to manage new chains initialized with `qcrypt luksInit` or previously unmanaged chains with `qcryptd`, you'll have to create one ini configuration file per chain inside `/etc/qcryptd/default`. An example ini file can be found [here](https://github.com/3hhh/qcrypt/blob/master/conf/examples/ex01.ini).
 
-It is then recommended to check that configuration with `qcryptd check`. Assuming your configuration was found to be correct, you can start the qcryptd service with `qcryptd start` and further control it with `qcryptd stop` and `qcryptd restart`. Configuration file changes require a `qcryptd -c restart`.
+It is then recommended to check that configuration with `qcryptd check`. Assuming your configuration was found to be correct, you can start the qcryptd service with `qcryptd start` and further control it with `qcryptd stop` and `qcryptd restart`. After configuration file changes it is recommended to do a `qcryptd -c restart`.
 
-Also see `qcryptd help` for a more detailed description.
+Also see `qcryptd help` for a more detailed description after the installation.
 
 #### Example
 
@@ -108,7 +108,7 @@ Assuming that the `/home/user/encrypted.lks` file inside the `sys-usb` VM from t
 source vm=sys-usb
 source device=/dev/disk/by-uuid/id
 source mount point=/mnt-id-dev
-source file=/encrypted.luks
+source file=/encrypted.lks
 key=secret.key
 destination vm 1=mediator-vm
 destination vm 2=work-vm
@@ -118,11 +118,11 @@ read-only=false
 
 One could put that configuration e.g. inside the directory `/etc/qcryptd/example/med-work.ini` and could then start qcryptd with `qcryptd start example`.
 
-Please keep in mind that the `mediator-vm` may be started or stopped by qcryptd at will. So it is highly recommended to use it only for the purpose of that single chain.
+Please keep in mind that the `mediator-vm` may be started or stopped by qcryptd at will. So it is highly recommended to use it only for the purpose of that single chain!
 
 ### But I want to use passwords?!
 
-You can e.g. create a password-protected luks container in dom0 and inject all your qcrypt key files from that container. Or just leave them in plaintext in dom0 and create such a luks container with a 15+ character memorizable password as backup.
+You can e.g. create a password-protected luks container in dom0 and inject all your qcrypt key files from that container (see the `qcrypt --inj` option for further details). Or just leave them in plaintext in dom0 and create such a luks container with a 15+ character memorizable password as backup at another location.
 
 Of course, if you ever lose that container, your keys or forget your password, you lose all of your data. So make sure to always have a backup!
 
