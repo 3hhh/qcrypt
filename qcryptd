@@ -268,12 +268,12 @@ for ((i=1;;i++)) ; do
 		parseIniKey "$chainId" "destination vm $i" 1 0
 	fi
 	parseIniKey "$chainId" "destination inj $i" 1 1 || ((errCnt+=1))
+	parseIniKey "$chainId" "destination opt $i" 1 1 || ((errCnt+=1))
 done
 parseIniKey "$chainId" "destination mount point" 1 1 || ((errCnt+=1))
 parseIniKey "$chainId" "autostart" 2 1 "1" || ((errCnt+=1))
 #NOTE: read-only is set to true by default to prevent accidents (always make the more secure alternative the default)
 parseIniKey "$chainId" "read-only" 2 1 "0" || ((errCnt+=1))
-parseIniKey "$chainId" "type" 1 1 "luks" || ((errCnt+=1))
 parseIniKey "$chainId" "startup interval" 3 1 "300" || ((errCnt+=1))
 parseIniKey "$chainId" "pre open command" 1 1 || ((errCnt+=1))
 parseIniKey "$chainId" "post open command" 1 1 || ((errCnt+=1))
@@ -284,10 +284,11 @@ parseIniKey "$chainId" "post close command" 1 1 || ((errCnt+=1))
 [ $errCnt -ne 0 ] && B_ERR="Exiting due to the above configuration errors." && B_E
 
 #validate keys
-local toCheck=("source vm" "source device" "source mount point" "source file" "key" "destination mount point" "autostart" "read-only" "type" "startup interval" "pre open command" "post open command" "pre close command" "post close command")
+local toCheck=("source vm" "source device" "source mount point" "source file" "key" "destination mount point" "autostart" "read-only" "startup interval" "pre open command" "post open command" "pre close command" "post close command")
 for ((i=1;i<=10;i++)) ; do
 	toCheck+=("destination vm $i")
 	toCheck+=("destination inj $i")
+	toCheck+=("destination opt $i")
 done
 b_ini_assertNames "" "${toCheck[@]}" 
 
@@ -325,13 +326,21 @@ local i=
 local vm=
 local options=""
 local inj=
+local copt=
 for ((i=1;;i++)) ; do
 	vm="${CHAINS2INFO["${chainId}_destination vm $i"]}"
 	[ -z "$vm" ] && break
 	printf -v argChain '%s %q' "$argChain" "$vm"
+
 	inj="${CHAINS2INFO["${chainId}_destination inj $i"]}"
 	if [ -n "$inj" ] ; then
 		printf -v options '%s --inj %q %q' "$options" "$vm" "$inj"
+	fi
+
+	copt="${CHAINS2INFO["${chainId}_destination opt $i"]}"
+	if [ -n "$copt" ] ; then
+		[[ "$copt" == *"'"* ]] && B_ERR="Found a disallowed single quote inside the cryptsetup option: $copt" && B_E
+		printf -v options "%s --cy %q '%s'" "$options" "$vm" "$copt"
 	fi
 done
 
@@ -340,7 +349,6 @@ local cmd=
 [ ${CHAINS2INFO["${chainId}_autostart"]} -eq 0 ] && options="$options -a"
 [ ${CHAINS2INFO["${chainId}_read-only"]} -eq 0 ] && options="$options --ro"
 [ -n "${CHAINS2INFO["${chainId}_destination mount point"]}" ] && printf -v options '%s --mp %q' "$options" "${CHAINS2INFO["${chainId}_destination mount point"]}"
-[ -n "${CHAINS2INFO["${chainId}_type"]}" ] && printf -v options '%s --type %q' "$options" "${CHAINS2INFO["${chainId}_type"]}"
 printf -v cmd '%q %s open -- %s' "$QCRYPT" "$options" "$argChain"
 CHAINS2INFO["${chainId}_open"]="$cmd"
 

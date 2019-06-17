@@ -102,13 +102,14 @@ function setup {
 	[[ "${CHAINS2INFO["${chain}_key"]}" == "ex01-key" ]]
 	[[ "${CHAINS2INFO["${chain}_destination vm 1"]}" == "d-testing" ]]
 	[[ "${CHAINS2INFO["${chain}_destination inj 1"]}" == "/root/qcrypt-keys/ex01_disp" ]]
+	[[ "${CHAINS2INFO["${chain}_destination opt 1"]}" == "--type plain --cipher aes-xts-plain64 -s 512 --hash sha512" ]]
 	[[ "${CHAINS2INFO["${chain}_destination vm 2"]}" == "work" ]]
 	[[ "${CHAINS2INFO["${chain}_destination inj 2"]}" == "" ]]
+	[[ "${CHAINS2INFO["${chain}_destination opt 2"]}" == "" ]]
 	[[ "${CHAINS2INFO["${chain}_destination mount point"]}" == "/qcrypt-ex01" ]]
 	echo 2
 	[[ "${CHAINS2INFO["${chain}_autostart"]}" == "1" ]]
 	[[ "${CHAINS2INFO["${chain}_read-only"]}" == "1" ]]
-	[[ "${CHAINS2INFO["${chain}_type"]}" == "luks" ]]
 	[[ "${CHAINS2INFO["${chain}_startup interval"]}" == "300" ]]
 	[[ "${CHAINS2INFO["${chain}_pre open command"]}" == "" ]]
 	echo 3
@@ -117,7 +118,7 @@ function setup {
 	[[ "${CHAINS2INFO["${chain}_post close command"]}" == "" ]]
 	echo a
 	local mainCmd="sys-usb /mnt-ex01//containers/ex01-container.luks ex01-key d-testing work"
-	[[ "${CHAINS2INFO["${chain}_open"]}" == *"qcrypt  --inj d-testing /root/qcrypt-keys/ex01_disp --mp /qcrypt-ex01 --type luks open -- $mainCmd" ]]
+	[[ "${CHAINS2INFO["${chain}_open"]}" == *"qcrypt  --inj d-testing /root/qcrypt-keys/ex01_disp --cy d-testing '--type plain --cipher aes-xts-plain64 -s 512 --hash sha512' --mp /qcrypt-ex01 open -- $mainCmd" ]]
 	echo b
 	[[ "${CHAINS2INFO["${chain}_status"]}" == *"qcrypt status -- $mainCmd" ]]
 	[[ "${CHAINS2INFO["${chain}_close"]}" == *"qcrypt close --force -- $mainCmd" ]]
@@ -139,7 +140,6 @@ function setup {
 	[[ "${CHAINS2INFO["${chain}_destination mount point"]}" == "/qcrypt-ex03" ]]
 	[[ "${CHAINS2INFO["${chain}_autostart"]}" == "0" ]]
 	[[ "${CHAINS2INFO["${chain}_read-only"]}" == "0" ]]
-	[[ "${CHAINS2INFO["${chain}_type"]}" == "luks" ]]
 	[[ "${CHAINS2INFO["${chain}_startup interval"]}" == "5" ]]
 	[[ "${CHAINS2INFO["${chain}_pre open command"]}" == 'logger "starting the ex03 chain"' ]]
 	[[ "${CHAINS2INFO["${chain}_post open command"]}" == 'logger "started the ex03 chain"' ]]
@@ -147,7 +147,7 @@ function setup {
 	[[ "${CHAINS2INFO["${chain}_post close command"]}" == 'logger "stopped the ex03 chain"' ]]
 	echo d
 	local mainCmd="another-usb /mnt-ex03//containers/ex03-container.luks ex03-key d-testing work work2"
-	[[ "${CHAINS2INFO["${chain}_open"]}" == *"qcrypt  --inj d-testing /root/qcrypt-keys/ex03_disp --inj work /another/path.key --inj work2 /another/path2.key -a --ro --mp /qcrypt-ex03 --type luks open -- $mainCmd" ]]
+	[[ "${CHAINS2INFO["${chain}_open"]}" == *"qcrypt  --inj d-testing /root/qcrypt-keys/ex03_disp --cy d-testing '--type luks' --inj work /another/path.key --inj work2 /another/path2.key --cy work2 '--type luks' -a --ro --mp /qcrypt-ex03 open -- $mainCmd" ]]
 	echo e
 	[[ "${CHAINS2INFO["${chain}_status"]}" == *"qcrypt status -- $mainCmd" ]]
 	[[ "${CHAINS2INFO["${chain}_close"]}" == *"qcrypt close --force -- $mainCmd" ]]

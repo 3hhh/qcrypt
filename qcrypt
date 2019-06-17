@@ -83,7 +83,9 @@ open
 			 Otherwise the plaintext device is not mounted.
 	--inj [vm] [key] Inject the given [key] (full path) from dom0 into the [vm] before opening. This can be useful for disposable VMs.
 			 The parameter can be specified multiple times. Won't override existing keys.
-	--type [name]	 The encryption container to use: plain|luks|loopaes|tcrypt, default: luks.
+	--cy [vm] [opt]	 Pass the options [opt] to cryptsetup when the encrypted device for the given [vm] is opened. This parameter may be
+			 specified multiple times. Multiple options can be concatenated; spaces in arguments may require escaping though. Should
+			 be used by experts only.
 	--ro		 Attach all involved devices in read-only mode (default: r/w).
 
 status
@@ -115,8 +117,7 @@ luksInit
 	--fs [type]	 Generate the given file system type with mkfs in the decrypted container (default: ext4).
 	--enkey [device] Block device to use as entropy source for the key generation (default: /dev/random).
 	--encon [device] Block device to use as entropy source for the container initialization (default: /dev/urandom).
-
-	All cryptsetup luksFormat options are supported in their long format as well. They are directly passed to cryptsetup.
+	--cy [vm] [opt]	 See open. The [vm] must be the one for which the container is created.
 
 close
 	Detach the [source file] from [destination vm n] and all intermediary VMs. Exits with a zero status code if and only if all remnants
@@ -195,9 +196,7 @@ echo "${QCRYPT_KEYS/#~/\/home\/$vmUser}/$keyId"
 #Parse all arguments of this script, apply some normalisations and do some preliminary option checks.
 #@B_E
 function parseAndCheckArgs {
-#NOTE: in order to support the cryptsetup luksFormat options, we unfortunately need to add them here (the ones that don't make sense with qcrypt and the ones without parameters were left out)
-b_args_init 0 "--mp" 1 "--inj" 2 "--type" 1 "--size" 1 "--wd" 1 "--ks" 1 "--bak" 1 "--fs" 1 "--enkey" 1 "--encon" 1 \
-	"--hash" 1 "--cipher" 1 "--key-slot" 1 "--keyfile-offset" 1 "--keyfile-size" 1 "--iter-time" 1 "--header" 1
+b_args_init 0 "--mp" 1 "--inj" 2 "--size" 1 "--wd" 1 "--ks" 1 "--bak" 1 "--fs" 1 "--enkey" 1 "--encon" 1 "--cy" 2
 b_args_setOptionParamSeparator "<aosep>"
 b_args_parse "$@"
 
@@ -218,13 +217,12 @@ local cmd="${B_ARGS[0]}"
 
 case "$cmd" in
 	"open")
-		b_args_assertOptions "-a" "--mp" "--inj" "--type" "--ro"
+		b_args_assertOptions "-a" "--mp" "--inj" "--ro" "--cy"
 		;;
 
 	"luksInit")
 		#NOTE: we must also check for the supported luksFormat options here
-		b_args_assertOptions "-a" "--size" "--wd" "--ks" "--bak" "--fs" "--enkey" "--encon" \
-			"--hash" "--cipher" "--key-slot" "--keyfile-offset" "--keyfile-size" "--use-random" "--use-urandom" "--iter-time" "--header"
+		b_args_assertOptions "-a" "--size" "--wd" "--ks" "--bak" "--fs" "--enkey" "--encon" "--cy"
 		;;
 
 	"close")
@@ -297,24 +295,47 @@ else
 fi
 }
 
+#parseCryptsetupParams [map name] [destination VM 1] ... [destination VM n]
+#[map name]: Name of the map to return.
+#returns: A string which can be eval'ed to a map of VM --> additional cryptsetup options (all in one string, escaped) for that VM.
+#@B_E
+function parseCryptsetupParams {
+local mapName="$1"
+shift
+
+declare -A ret=()
+local i=0
+local sep="$(b_args_getOptionParamSeparator)"
+while [ -n "${B_ARGS_OPTS["--cy_$i"]+exists}" ] ; do
+	local pars="${B_ARGS_OPTS["--cy_$i"]}"
+	local vm="${pars%${sep}*}"
+	b_arr_contains "$vm" "$@" || { B_ERR="The cryptsetup option VM $vm is not part of the destination VMs." ; B_E }
+	local par="${pars#*$sep}"
+	#NOTE: we don't escape here as the user is allowed to concatenate parameters himself --> he needs to escape himself (but cryptsetup appears to have almost no options that might require escaping)
+	ret["$vm"]="${ret["$vm"]} $par"
+	i=$(($i +1))
+done
+
+ret="$(declare -p ret 2> /dev/null)"
+echo "${ret/declare -A ret/declare -A $mapName}"
+}
+
 #see open @usage
 #@B_E
 function openC {
 local mountPoint=""
-local encType="luks"
 local rwFlag=0
 local autostart=1
 declare -A injections
 
 #parse params
-[ -n "${B_ARGS_OPTS["-a_0"]+exists}" ] && autostart=0
-[ -n "${B_ARGS_OPTS["--mp_0"]+exists}" ] && mountPoint="${B_ARGS_OPTS["--mp_0"]}"
-[ -n "${B_ARGS_OPTS["--type_0"]+exists}" ] && encType="${B_ARGS_OPTS["--type_0"]}"
-[ -n "${B_ARGS_OPTS["--ro_0"]+exists}" ] && rwFlag=1
 local sourceVM="${B_ARGS[1]}"
 local sourceFile="${B_ARGS[2]}"
 local keyId="${B_ARGS[3]}"
 declare -a dsts=("${B_ARGS[@]:4}")
+[ -n "${B_ARGS_OPTS["-a_0"]+exists}" ] && autostart=0
+[ -n "${B_ARGS_OPTS["--mp_0"]+exists}" ] && mountPoint="${B_ARGS_OPTS["--mp_0"]}"
+[ -n "${B_ARGS_OPTS["--ro_0"]+exists}" ] && rwFlag=1
 local i=0
 local sep="$(b_args_getOptionParamSeparator)"
 while [ -n "${B_ARGS_OPTS["--inj_$i"]+exists}" ] ; do
@@ -326,6 +347,9 @@ while [ -n "${B_ARGS_OPTS["--inj_$i"]+exists}" ] ; do
 	[ -f "$injKey" ] || { B_ERR="No file: $injKey" ; B_E }
 	i=$(($i +1))
 done
+local coptStr=
+coptStr="$(parseCryptsetupParams "copt" "${dsts[@]}")" || { B_ERR="Failed to parse the cryptsetup parameters. Original error: $coptStr" ; B_E }
+eval "$coptStr" || { B_ERR="Programming error?!" ; B_E }
 
 #make sure that the open doesn't f*ck things up
 b_info "Checking whether the chain is fully closed..."
@@ -411,7 +435,7 @@ for ((i=0;i<=$lastInd;i++)) ; do
 	keyPath="$(getKeyPath "$attachTo" "$keyId")" || { B_ERR="Failed to retrieve the key file path inside the VM $attachTo for the key ID $keyId." ; B_E }
 	#NOTE: we use the key ID as device mapper name
 	b_info "Decrypting inside ${attachTo}..."
-	b_dom0_openCrypt "$attachTo" "$attachToDevice" "$mapperName" "$rwFlag" "$mpTo" "$keyPath" "$encType" || { B_ERR="Failed to decrypt the device $attachToDevice inside the VM $attachTo using the key file $keyPath." ; B_E }
+	b_dom0_openCrypt "$attachTo" "$attachToDevice" "$mapperName" "$rwFlag" "$mpTo" "$keyPath" "${copt["$attachTo"]}" || { B_ERR="Failed to decrypt the device $attachToDevice inside the VM $attachTo using the key file $keyPath." ; B_E }
 
 	#special case: last run
 	if [ $i -eq $lastInd ] ; then
@@ -473,7 +497,6 @@ done <<< "$avail"
 #@B_E
 function luksInitC {
 local parSepSeen=1
-local cryptsetupParams=""
 local size=1073741824
 local keySize=100
 local enKey="/dev/random"
@@ -484,6 +507,10 @@ local workingDir="/tmp"
 local autostart=1
 
 #parse params
+local sourceVM="${B_ARGS[1]}"
+local sourceFile="${B_ARGS[2]}"
+local keyId="${B_ARGS[3]}"
+declare -a dsts=("${B_ARGS[@]:4}")
 [ -n "${B_ARGS_OPTS["-a_0"]+exists}" ] && autostart=0
 if [ -n "${B_ARGS_OPTS["--size_0"]+exists}" ] ; then
 	size="$(b_fs_parseSize "${B_ARGS_OPTS["--size_0"]}")" || { B_ERR="Failed to parse the --size parameter: $2" ; B_E }
@@ -508,26 +535,9 @@ if [ -n "${B_ARGS_OPTS["--bak_0"]+exists}" ] ; then
 	[ -d "$keyBackupFolder" ] || { B_ERR="No directory: $keyBackupFolder" ; B_E }
 fi
 [ -n "${B_ARGS_OPTS["--fs_0"]+exists}" ] && fsType="${B_ARGS_OPTS["--fs_0"]}"
-
-#the remaining options are cryptsetup parameters
-local rem="$(b_setErrorHandler "b_defaultErrorHandler 1 1 1" ;
-	b_args_assertOptions "-a" "--size" "--wd" "--ks" "--bak" "--fs" "--enkey" "--encon" ;
-	echo "$B_ERR")"
-local opt=
-local firstLine=0
-while IFS= read -r opt ; do
-	[ $firstLine -eq 0 ] && firstLine=1 && continue
-	[ -z "$opt" ] && continue
-	printf -v cryptsetupParams "%s %q" "$cryptsetupParams" "$opt"
-	local par="${B_ARGS_OPTS["${opt}_0"]}"
-	#NOTE: all cryptsetup options only have at most one parameter at the moment - if that changes, the below code needs to change
-	[ -n "$par" ] && printf -v cryptsetupParams "%s %q" "$cryptsetupParams" "$par"
-done <<< "$rem"
-
-local sourceVM="${B_ARGS[1]}"
-local sourceFile="${B_ARGS[2]}"
-local keyId="${B_ARGS[3]}"
-declare -a dsts=("${B_ARGS[@]:4}")
+local coptStr=
+coptStr="$(parseCryptsetupParams "copt" "${dsts[@]}")" || { B_ERR="Failed to parse the cryptsetup parameters. Original error: $coptStr" ; B_E }
+eval "$coptStr" || { B_ERR="Programming error?!" ; B_E }
 
 #safety checks
 b_info "Doing some safety checks..."
@@ -579,7 +589,7 @@ for dst in "${dsts[@]}" ; do
 
 	#format
 	b_info "Generating the encryption layer for the VM ${dst}..."
-	cryptsetup -q --key-file "$dom0KeyFile" $cryptsetupParams luksFormat "$curDevice" || { B_ERR="Failed to run cryptsetup luksFormat." ; B_E }
+	cryptsetup -q --key-file "$dom0KeyFile" ${copt["$dst"]} luksFormat "$curDevice" || { B_ERR="Failed to run cryptsetup luksFormat." ; B_E }
 
 	#open the newly created layer
 	b_info "Switching to the next encryption layer..."

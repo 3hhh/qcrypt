@@ -206,7 +206,7 @@ function postInitChecks {
 
 	#different key size, cryptsetup parameter & 2 layers
 	rm -f "$bak"/*
-	runSL "$QCRYPT" "luksInit" --hash sha256 --size "$s" --ks 70 --wd "$wd" --bak "$bak" -- "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/kstest" "tstkey-ks" "${TEST_STATE["QCRYPT_VM_2"]}" "$UTD_QUBES_TESTVM"
+	runSL "$QCRYPT" "luksInit" --cy "${TEST_STATE["QCRYPT_VM_2"]}" '--hash sha256' --cy "$UTD_QUBES_TESTVM" '--hash sha256' --size "$s" --ks 70 --wd "$wd" --bak "$bak" -- "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/kstest" "tstkey-ks" "${TEST_STATE["QCRYPT_VM_2"]}" "$UTD_QUBES_TESTVM"
 	echo "$output"
 	[ $status -eq 0 ]
 	[ -n "$output" ]
@@ -303,7 +303,7 @@ function runForceClose {
 	[[ "$output" == *"ERROR"* ]]
 
 	#correct open with a single layer
-	runSL "$QCRYPT" open --inj "${TEST_STATE["QCRYPT_VM_2"]}" "$fixturePath/keys/target" --mp "/mnt" -- "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/1layer01" "1layer01" "${TEST_STATE["QCRYPT_VM_2"]}"
+	runSL "$QCRYPT" --cy "${TEST_STATE["QCRYPT_VM_2"]}" '--type luks' open --inj "${TEST_STATE["QCRYPT_VM_2"]}" "$fixturePath/keys/target" --mp "/mnt" -- "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/1layer01" "1layer01" "${TEST_STATE["QCRYPT_VM_2"]}"
 	echo "$output"
 	[ $status -eq 0 ]
 	[[ "$output" == *"Open done."* ]]
