@@ -6,7 +6,7 @@ Each layer is decrypted inside a dedicated destination Virtual Machine (VM)/Qube
 
 It enables you to attach trusted storage to [Qubes OS](https://www.qubes-os.org/) VMs from untrusted storage backends (USB drive, cloud, ...).
 
-Depending on the setup, it can mitigate attacks stemming from file system parsing bugs, encryption parsing bugs in [cryptsetup](https://gitlab.com/cryptsetup/cryptsetup/wikis/home) and can prevent compromised VMs from leaking their data with incorrect encryption.
+Depending on the setup, it can mitigate attacks stemming from file system parsing bugs and can prevent compromised VMs from leaking their data with incorrect encryption. Header or encryption parsing bugs in [cryptsetup](https://gitlab.com/cryptsetup/cryptsetup/wikis/home) remain an issue, but their impact can be lessened manually (plain mode & mix different encryption algorithms).
 
 Internally, qcrypt uses [cryptsetup](https://gitlab.com/cryptsetup/cryptsetup/wikis/home) in combination with standard [Qubes OS](https://www.qubes-os.org/) functionality (block device attachments).
 
