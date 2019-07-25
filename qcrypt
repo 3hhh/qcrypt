@@ -34,6 +34,9 @@ B_RC=6
 QCRYPT_FOLDER="~/.qcrypt"
 QCRYPT_KEYS="$QCRYPT_FOLDER/keys"
 
+#array of destination VMs, parsed by parseDestinations()
+declare -a DSTS
+
 #some global arrays required by statusAllC
 declare -a S_CAND
 declare -A S_DATA
@@ -201,19 +204,33 @@ b_args_setOptionParamSeparator "<aosep>"
 b_args_parse "$@"
 
 assertCorrectParams
+}
 
-#canonicalize the source file (users may pass e.g. /foo//bar --> /foo/bar however is expected by qcrypt)
-local sourceFile="${B_ARGS[2]}"
-if [ -n "$sourceFile" ] ; then
-	B_ARGS[2]="$(readlink -m "$sourceFile")" || { B_ERR="Failed to canonicalize the source file: $sourceFile" ; B_E }
+#getCanonicalFileParameter [parameter index] [fallback]
+#Make the given parameter a canonical file path.
+#[parameter index]: index for b_args_get (default: 2)
+#returns: Sets a zero exit code only on successful canonicalisation.
+function getCanonicalFileParameter {
+local ind="${1:-2}"
+local fb="$2"
+
+#canonicalize the file (users may pass e.g. /foo//bar --> /foo/bar however is expected by qcrypt)
+local file=
+file="$(b_args_get "$ind" "$fb")" || { echo "$file" ;  return $? ; }
+if [ -n "$file" ] ; then
+	readlink -m "$file" || { B_ERR="Failed to canonicalize the file: $file" ; B_E }
 fi
+return 0
 }
 
 #assertCorrectParams
 #Checks whether the command-line parameters are valid and if not, errors out.
 #@B_E
 function assertCorrectParams {
-local cmd="${B_ARGS[0]}"
+local cmd="$(b_args_get 0)"
+
+local numArgs="$(b_args_getCount)"
+local numOpts="$(b_args_getOptionCount)"
 
 case "$cmd" in
 	"open")
@@ -230,7 +247,7 @@ case "$cmd" in
 		;;
 
 	"status")
-		[ ${#B_ARGS[@]} -eq 1 ] && [ ${#B_ARGS_OPTS[@]} -eq 0 ] && return 0
+		[ $numArgs -eq 1 ] && [ $numOpts -eq 0 ] && return 0
 		b_args_assertOptions "--mp"
 		;;
 
@@ -239,18 +256,16 @@ case "$cmd" in
 		;;
 esac
 
-[ ${#B_ARGS[@]} -lt 5 ] && usage
+[ $numArgs -lt 5 ] && usage
 
-local keyId="${B_ARGS[3]}"
+local keyId="$(b_args_get 3)"
 local keyRegex='^[0-9a-zA-Z_\-\+\.]+$'
 [[ "$keyId" =~ $regex ]] || { B_ERR="The given key ID $keyId appears to be invalid." ; B_E }
 
 #ensure all regular arguments are non-empty
-local cnt=1
-local par=
-for par in "${B_ARGS[@]}" ; do
-	[ -z "$par" ] && B_ERR="Found argument #$cnt to be empty." && B_E
-	cnt=$(( $cnt +1 ))
+local i=
+for ((i=0;i<$numArgs;i++)) ; do
+	[ -z "$(b_args_get $i)" ] && B_ERR="Found argument #$(($i +1)) to be empty." && B_E
 done
 
 return 0
@@ -305,12 +320,12 @@ shift
 
 declare -A ret=()
 local i=0
-local sep="$(b_args_getOptionParamSeparator)"
-while [ -n "${B_ARGS_OPTS["--cy_$i"]+exists}" ] ; do
-	local pars="${B_ARGS_OPTS["--cy_$i"]}"
-	local vm="${pars%${sep}*}"
+local vm=
+local par=
+while b_args_getOption "--cy" "" "$i" > /dev/null ; do
+	vm="$(b_args_getOption "--cy" "" "$i" 0)" || { B_ERR="Failed to retrieve the VM for the cryptsetup option $i." ; B_E }
+	par="$(b_args_getOption "--cy" "" "$i" 1)" || { B_ERR="Failed to retrieve the parameter for the cryptsetup option $i." ; B_E }
 	b_arr_contains "$vm" "$@" || { B_ERR="The cryptsetup option VM $vm is not part of the destination VMs." ; B_E }
-	local par="${pars#*$sep}"
 	#NOTE: we don't escape here as the user is allowed to concatenate parameters himself --> he needs to escape himself (but cryptsetup appears to have almost no options that might require escaping)
 	ret["$vm"]="${ret["$vm"]} $par"
 	i=$(($i +1))
@@ -320,50 +335,71 @@ ret="$(declare -p ret 2> /dev/null)"
 echo "${ret/declare -A ret/declare -A $mapName}"
 }
 
+#parseDestinations
+#Updates the [DSTS](#DSTS) array from the current command-line arguments (using the args module).
+#returns: Nothing.
+function parseDestinations {
+DSTS=()
+local i=
+local numArgs="$(b_args_getCount)"
+for ((i=4;i<$numArgs;i++)) ; do
+	DSTS+=("$(b_args_get "$i")")
+done
+return 0
+}
+
 #see open @usage
 #@B_E
 function openC {
-local mountPoint=""
 local rwFlag=0
 local autostart=1
 declare -A injections
 
 #parse params
-local sourceVM="${B_ARGS[1]}"
-local sourceFile="${B_ARGS[2]}"
-local keyId="${B_ARGS[3]}"
-declare -a dsts=("${B_ARGS[@]:4}")
-[ -n "${B_ARGS_OPTS["-a_0"]+exists}" ] && autostart=0
-[ -n "${B_ARGS_OPTS["--mp_0"]+exists}" ] && mountPoint="${B_ARGS_OPTS["--mp_0"]}"
-[ -n "${B_ARGS_OPTS["--ro_0"]+exists}" ] && rwFlag=1
+local sourceVM="$(b_args_get 1)"
+
+local sourceFile=
+sourceFile="$(getCanonicalFileParameter)" || { B_ERR="Failed to canonicalize the source file parameter. Original error: $sourceFile" ; B_E }
+
+local keyId="$(b_args_get 3)"
+
+parseDestinations
+
+b_args_getOption "-a" > /dev/null && autostart=0
+
+b_args_getOption "--ro" > /dev/null && rwFlag=1
+
+local mountPoint="$(b_args_getOption "--mp")"
+
 local i=0
-local sep="$(b_args_getOptionParamSeparator)"
-while [ -n "${B_ARGS_OPTS["--inj_$i"]+exists}" ] ; do
-	local pars="${B_ARGS_OPTS["--inj_$i"]}"
-	local injTarget="${pars%${sep}*}"
-	b_arr_contains "$injTarget" "${dsts[@]}" || { B_ERR="The injection VM $injTarget is not part of the destination VMs." ; B_E }
-	local injKey="${pars#*$sep}"
+local injTarget=
+local injKey=
+while b_args_getOption "--inj" "" "$i" > /dev/null ; do
+	injTarget="$(b_args_getOption "--inj" "" "$i" 0)" || { B_ERR="Failed to retrieve the target VM for the injection $i." ; B_E }
+	injKey="$(b_args_getOption "--inj" "" "$i" 1)" || { B_ERR="Failed to retrieve the key for the injection $i." ; B_E }
+	b_arr_contains "$injTarget" "${DSTS[@]}" || { B_ERR="The injection VM $injTarget is not part of the destination VMs." ; B_E }
 	injections["$injTarget"]="$injKey"
 	[ -f "$injKey" ] || { B_ERR="No file: $injKey" ; B_E }
 	i=$(($i +1))
 done
+
 local coptStr=
-coptStr="$(parseCryptsetupParams "copt" "${dsts[@]}")" || { B_ERR="Failed to parse the cryptsetup parameters. Original error: $coptStr" ; B_E }
+coptStr="$(parseCryptsetupParams "copt" "${DSTS[@]}")" || { B_ERR="Failed to parse the cryptsetup parameters. Original error: $coptStr" ; B_E }
 eval "$coptStr" || { B_ERR="Programming error?!" ; B_E }
 
 #make sure that the open doesn't f*ck things up
 b_info "Checking whether the chain is fully closed..."
-ensureClosed "$sourceVM" "$sourceFile" "$keyId" "${dsts[@]}"
+ensureClosed "$sourceVM" "$sourceFile" "$keyId" "${DSTS[@]}"
 
 #start all necessary VMs or check that they are running
 if [ $autostart -eq 0 ] ; then
-	echo -n "INFO: Starting the VMs $sourceVM ${dsts[@]}... "
-	b_dom0_ensureRunning "$sourceVM" "${dsts[@]}"
+	echo -n "INFO: Starting the VMs $sourceVM ${DSTS[@]}... "
+	b_dom0_ensureRunning "$sourceVM" "${DSTS[@]}"
 	echo "Done."
 else
 	#check source & dest and only autostart intermediate VMs
-	b_dom0_isRunning "$sourceVM" "${dsts[-1]}"
-	declare -a interm=("${dsts[@]::${#dsts[@]}-1}")
+	b_dom0_isRunning "$sourceVM" "${DSTS[-1]}"
+	declare -a interm=("${DSTS[@]::${#DSTS[@]}-1}")
 	if [ ${#interm[@]} -gt 0 ] ; then
 		echo -n "INFO: Starting the intermediate VMs ${interm[@]}... "
 		b_dom0_ensureRunning "${interm[@]}"
@@ -423,9 +459,9 @@ local attachFromDevice="$sourceFile"
 local mpTo=""
 local mapperName="$keyId"
 local i=
-local lastInd=$(( ${#dsts[@]} -1 ))
+local lastInd=$(( ${#DSTS[@]} -1 ))
 for ((i=0;i<=$lastInd;i++)) ; do
-	local attachTo="${dsts[$i]}"
+	local attachTo="${DSTS[$i]}"
 	local attachToDevice=""
 
 	[ $i -eq $lastInd ] && mpTo="$mountPoint" || mpTo=""
@@ -496,47 +532,41 @@ done <<< "$avail"
 #see create @usage
 #@B_E
 function luksInitC {
-local parSepSeen=1
-local size=1073741824
-local keySize=100
-local enKey="/dev/random"
-local enCon="/dev/urandom"
-local keyBackupFolder=""
-local fsType="ext4"
-local workingDir="/tmp"
-local autostart=1
-
 #parse params
-local sourceVM="${B_ARGS[1]}"
-local sourceFile="${B_ARGS[2]}"
-local keyId="${B_ARGS[3]}"
-declare -a dsts=("${B_ARGS[@]:4}")
-[ -n "${B_ARGS_OPTS["-a_0"]+exists}" ] && autostart=0
-if [ -n "${B_ARGS_OPTS["--size_0"]+exists}" ] ; then
-	size="$(b_fs_parseSize "${B_ARGS_OPTS["--size_0"]}")" || { B_ERR="Failed to parse the --size parameter: $2" ; B_E }
-fi
-if [ -n "${B_ARGS_OPTS["--wd_0"]+exists}" ] ; then
-	workingDir="${B_ARGS_OPTS["--wd_0"]}"
-	mkdir -p "$workingDir" || { B_ERR="Failed to create $workingDir." ; B_E }
-	[ -d "$workingDir" ] || { B_ERR="No directory: $workingDir" ; B_E }
-fi
-[ -n "${B_ARGS_OPTS["--ks_0"]+exists}" ] && keySize="${B_ARGS_OPTS["--ks_0"]}"
-if [ -n "${B_ARGS_OPTS["--enkey_0"]+exists}" ] ; then
-	enKey="${B_ARGS_OPTS["--enkey_0"]}"
-	[ -c "$enKey" ] || { B_ERR="No valid entropy source: $enKey" ; B_E }
-fi
-if [ -n "${B_ARGS_OPTS["--encon_0"]+exists}" ] ; then
-	enCon="${B_ARGS_OPTS["--encon_0"]}"
-	[ -c "$enCon" ] || { B_ERR="No valid entropy source: $enCon" ; B_E }
-fi
-if [ -n "${B_ARGS_OPTS["--bak_0"]+exists}" ] ; then
-	keyBackupFolder="${B_ARGS_OPTS["--bak_0"]}"
+local sourceVM="$(b_args_get 1)"
+local sourceFile=
+sourceFile="$(getCanonicalFileParameter)" || { B_ERR="Failed to canonicalize the source file parameter. Original error: $sourceFile" ; B_E }
+local keyId="$(b_args_get 3)"
+parseDestinations
+
+local autostart=1
+b_args_getOption "-a" > /dev/null && autostart=0
+
+local size="$(b_args_getOption "--size" "1073741824")"
+size="$(b_fs_parseSize "$size")" || { B_ERR="Failed to parse the --size parameter: $size" ; B_E }
+
+local workingDir="$(b_args_getOption "--wd" "/tmp")"
+mkdir -p "$workingDir" || { B_ERR="Failed to create $workingDir." ; B_E }
+[ -d "$workingDir" ] || { B_ERR="No directory: $workingDir" ; B_E }
+
+local keySize="$(b_args_getOptionInt "--ks" "100")"
+
+local enKey="$(b_args_getOption "--enkey" "/dev/random")"
+[ -c "$enKey" ] || { B_ERR="No valid entropy source: $enKey" ; B_E }
+
+local enCon="$(b_args_getOption "--encon" "/dev/urandom")"
+[ -c "$enCon" ] || { B_ERR="No valid entropy source: $enCon" ; B_E }
+
+local keyBackupFolder="$(b_args_getOption "--bak")"
+if [ -n "$keyBackupFolder" ] ; then
 	mkdir -p "$keyBackupFolder" || { B_ERR="Failed to create $keyBackupFolder." ; B_E }
 	[ -d "$keyBackupFolder" ] || { B_ERR="No directory: $keyBackupFolder" ; B_E }
 fi
-[ -n "${B_ARGS_OPTS["--fs_0"]+exists}" ] && fsType="${B_ARGS_OPTS["--fs_0"]}"
+
+local fsType="$(b_args_getOption "--fs" "ext4")"
+
 local coptStr=
-coptStr="$(parseCryptsetupParams "copt" "${dsts[@]}")" || { B_ERR="Failed to parse the cryptsetup parameters. Original error: $coptStr" ; B_E }
+coptStr="$(parseCryptsetupParams "copt" "${DSTS[@]}")" || { B_ERR="Failed to parse the cryptsetup parameters. Original error: $coptStr" ; B_E }
 eval "$coptStr" || { B_ERR="Programming error?!" ; B_E }
 
 #safety checks
@@ -546,14 +576,14 @@ b_enforceUser "root"
 # b. we need to have enough space in dom0
 checkAvailableSpace "$workingDir" "$size" || { B_ERR="$workingDir provides less space than required by the --size parameter." ; B_E }
 # c. all necessary VMs must run
-[ $autostart -eq 0 ] && b_dom0_ensureRunning "$sourceVM" "${dsts[@]}" || b_dom0_isRunning "$sourceVM" "${dsts[@]}"
+[ $autostart -eq 0 ] && b_dom0_ensureRunning "$sourceVM" "${DSTS[@]}" || b_dom0_isRunning "$sourceVM" "${DSTS[@]}"
 # d. make sure the source VM doesn't already have a file named $sourceFile
 ensureFileDoesNotExistIn "$sourceVM" "$sourceFile"
 # e. make sure the key ID is not used in any of the destination VMs
 local dst=""
 local vmKeyPath=""
 declare -A vmKeyPaths
-for dst in "${dsts[@]}" ; do
+for dst in "${DSTS[@]}" ; do
 	vmKeyPath="$(getKeyPath "$dst" "$keyId")" || { B_ERR="Failed to retrieve the key file path inside the VM $dst for the key ID $keyId." ; B_E }
 	vmKeyPaths["$dst"]="$vmKeyPath"
 	ensureFileDoesNotExistIn "$dst" "$vmKeyPath"
@@ -578,7 +608,7 @@ b_traps_prepend "$cmd" EXIT || { B_ERR="Failed to register a cleanup trap." ; B_
 local dom0KeyFile=""
 declare -A dom0KeyFiles
 local curDevice="$dom0ContainerLoop"
-for dst in "${dsts[@]}" ; do
+for dst in "${DSTS[@]}" ; do
 	#generate key
 	b_info "Generating the key for the VM ${dst}..."
 	dom0KeyFile="$(mktemp -p "$workingDir")" || { B_ERR="Failed to create a temporary file." ; B_E }
@@ -611,7 +641,7 @@ fi
 if [ -n "$keyBackupFolder" ] ; then
 	b_info "Backing up all keys to $keyBackupFolder..."
 
-	for dst in "${dsts[@]}" ; do
+	for dst in "${DSTS[@]}" ; do
 		dom0KeyFile="${dom0KeyFiles["$dst"]}"
 		local bakFile="$keyBackupFolder/${dst}_$keyId"
 		[ -e "$bakFile" ] && B_ERR="A file called $bakFile already exists. Rejecting to overwrite." && B_E
@@ -621,7 +651,7 @@ if [ -n "$keyBackupFolder" ] ; then
 fi
 
 #pass the keys to the VMs
-for dst in "${dsts[@]}" ; do
+for dst in "${DSTS[@]}" ; do
 	dom0KeyFile="${dom0KeyFiles["$dst"]}"
 	vmKeyPath="${vmKeyPaths["$dst"]}"
 	b_info "Passing the key $dom0KeyFile to the VM $dst as $vmKeyPath..."
@@ -819,13 +849,14 @@ local force=1
 local shutdown=1
 
 #parse params
-[ -n "${B_ARGS_OPTS["--force_0"]+exists}" ] && force=0
-[ -n "${B_ARGS_OPTS["--sd_0"]+exists}" ] && shutdown=0
+b_args_getOption "--force" > /dev/null && force=0
+b_args_getOption "--sd" > /dev/null && shutdown=0
 
-local sourceVM="${B_ARGS[1]}"
-local sourceFile="${B_ARGS[2]}"
-local keyId="${B_ARGS[3]}"
-declare -a dsts=("${B_ARGS[@]:4}")
+local sourceVM="$(b_args_get 1)"
+local sourceFile=
+sourceFile="$(getCanonicalFileParameter)" || { B_ERR="Failed to canonicalize the source file parameter. Original error: $sourceFile" ; B_E }
+local keyId="$(b_args_get 3)"
+parseDestinations
 
 local allUp=
 #make sure the given chain is valid by checking its status
@@ -833,16 +864,16 @@ local allUp=
 if [ $force -ne 0 ] ; then
 	echo -n "INFO: Checking the validity of the chain... "
 	local state=""
-	state="$(b_args_parse "status" "$sourceVM" "$sourceFile" "$keyId" "${dsts[@]}" ; statusSingleC)" || { B_ERR="The chain has a bad status - check it below. If you want to continue nonetheless, use --force."$'\n'"$state" ; B_E }
+	state="$(b_args_parse "status" "$sourceVM" "$sourceFile" "$keyId" "${DSTS[@]}" ; statusSingleC)" || { B_ERR="The chain has a bad status - check it below. If you want to continue nonetheless, use --force."$'\n'"$state" ; B_E }
 	echo "Done. All good."
-	cleanClose "$force" "$shutdown" "$sourceVM" "$sourceFile" "$keyId" "${dsts[@]}"
+	cleanClose "$force" "$shutdown" "$sourceVM" "$sourceFile" "$keyId" "${DSTS[@]}"
 else
 	b_info "Force mode. Thus attempting a dirty close..."
 	# Reasoning: Qubes OS bug #4784 (https://github.com/QubesOS/qubes-issues/issues/4784) will make the system unusable until the next reboot, if any of the destination VMs are shut down and the above "clean" close is attempted afterwards.
 	# Available workarounds:
 	#  1. Never close and re-use the leftover open devices from previous qcrypt open operations. <-- not chosen
 	#  2. Perform the below "dirty" close by shutting down all destination VMs _without_ using qvm-block at all. This prevents bug #4784 from being triggered as of Qubes OS 4.0.1. <-- chosen
-	dirtyClose "$sourceVM" "$sourceFile" "$keyId" "${dsts[@]}"
+	dirtyClose "$sourceVM" "$sourceFile" "$keyId" "${DSTS[@]}"
 fi
 
 b_info "Close done."
@@ -907,15 +938,14 @@ fi
 #see status @usage
 #@B_E
 function statusSingleC {
-local mountPoint=""
-
 #parse params
-[ -n "${B_ARGS_OPTS["--mp_0"]+exists}" ] && mountPoint="${B_ARGS_OPTS["--mp_0"]}"
+local mountPoint="$(b_args_getOption "--mp")"
 
-local sourceVM="${B_ARGS[1]}"
-local sourceFile="${B_ARGS[2]}"
-local keyId="${B_ARGS[3]}"
-declare -a dsts=("${B_ARGS[@]:4}")
+local sourceVM="$(b_args_get 1)"
+local sourceFile=
+sourceFile="$(getCanonicalFileParameter)" || { B_ERR="Failed to canonicalize the source file parameter. Original error: $sourceFile" ; B_E }
+local keyId="$(b_args_get 3)"
+parseDestinations
 
 #target format:
 #sourceVM
@@ -975,9 +1005,9 @@ local lastVM="$sourceVM"
 local lastDescription="$sourceFile"
 local qvmBlockInfo=""
 local lastUsedBy=""
-local target="${dsts[@]: -1}"
+local target="${DSTS[@]: -1}"
 qvmBlockInfo="$(b_dom0_parseQvmBlock "map")" || { B_ERR="Failed to parse qvm-block ls." ; B_E }
-for dst in "${dsts[@]}" ; do
+for dst in "${DSTS[@]}" ; do
 	echo ""
 
 	#running?
@@ -1275,7 +1305,7 @@ return 0
 checkDependencies
 parseAndCheckArgs "$@"
 
-case "${B_ARGS[0]}" in
+case "$(b_args_get 0)" in
 	"open")
 		openC
 		;;

@@ -405,7 +405,7 @@ return 0
 #see check @usage
 #@B_E
 function checkC {
-parseConfigFiles "${B_ARGS[1]}"
+parseConfigFiles "$(b_args_get 1)"
 
 if [ $DEBUG -eq 0 ] ; then
 	declare -p CHAINS
@@ -420,11 +420,11 @@ exit 0
 #see chains @usage
 #@B_E
 function chainsC {
-parseConfigFiles "${B_ARGS[1]}"
+parseConfigFiles "$(b_args_get 1)"
 local execute=1
-[ -n "${B_ARGS_OPTS["-e_0"]+exists}" ] && execute=0
+b_args_getOption "-e" > /dev/null && execute=0
 local showConfigFiles=0
-[ -n "${B_ARGS_OPTS["-n_0"]+exists}" ] && showConfigFiles=1
+b_args_getOption "-n" > /dev/null && showConfigFiles=1
 
 local ret=0
 local chain=
@@ -455,7 +455,7 @@ exit $ret
 function stopC {
 #parse params
 local termSignal=10
-[ -n "${B_ARGS_OPTS["-c_0"]+exists}" ] && termSignal=12
+b_args_getOption "-c" > /dev/null && termSignal=12
 
 b_daemon_stop "$DID" "$termSignal" 0
 }
@@ -1128,7 +1128,7 @@ b_dom0_enterEventLoop "onQubesEvent" 1000
 #retuns: nothing, but errors out with [B_E](#B_E) for invalid targets
 #@B_E
 function assertValidTarget {
-local target="${B_ARGS[1]}"
+local target="$(b_args_get 1)"
 [ -z "$target" ] && target="default"
 getConfigFolder "$target" > /dev/null
 CONF_TARGET="$target"
@@ -1156,7 +1156,7 @@ return 0
 
 checkDependencies
 b_args_parse "$@"
-if [ -n "${B_ARGS_OPTS["-v_0"]+exists}" ] ; then
+if b_args_getOption "-v" > /dev/null ; then
 	DEBUG=0
 	initLog "$DEBUG_OUT"
 	initLog "$DEBUG_ERR"
@@ -1166,40 +1166,42 @@ else
 	b_daemon_init 1
 fi
 
-case "${B_ARGS[0]}" in
+numArgs="$(b_args_getCount)"
+
+case "$(b_args_get 0)" in
 	"start")
 		b_args_assertOptions "-v"
-		[ ${#B_ARGS[@]} -gt 2 ] && usage
+		[ $numArgs -gt 2 ] && usage
 		assertValidTarget
 		b_daemon_start "$DID"
 		;;
 	"stop")
 		b_args_assertOptions "-v" "-c"
-		[ ${#B_ARGS[@]} -gt 1 ] && usage
+		[ $numArgs -gt 1 ] && usage
 		stopC
 		;;
 	"restart")
 		b_args_assertOptions "-v" "-c"
-		[ ${#B_ARGS[@]} -gt 2 ] && usage
+		[ $numArgs -gt 2 ] && usage
 		assertValidTarget
 		stopC
 		b_daemon_start "$DID"
 		;;
 	"check")
 		b_args_assertOptions "-v"
-		[ ${#B_ARGS[@]} -gt 2 ] && usage
+		[ $numArgs -gt 2 ] && usage
 		assertValidTarget
 		checkC
 		;;
 	"chains")
 		b_args_assertOptions "-v" "-n" "-e"
-		[ ${#B_ARGS[@]} -gt 2 ] && usage
+		[ $numArgs -gt 2 ] && usage
 		assertValidTarget
 		chainsC
 		;;
 	"status")
 		b_args_assertOptions "-v"
-		[ ${#B_ARGS[@]} -gt 1 ] && usage
+		[ $numArgs -gt 1 ] && usage
 		b_daemon_status "$DID"
 		exit $?
 		;;
