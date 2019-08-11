@@ -161,7 +161,6 @@ losetup
 findmnt
 head
 tar
-wc
 xargs"
 b_dom0_setVMDeps "$vmDeps"
 }
@@ -182,25 +181,6 @@ else
 	#error
 	exit 9
 fi
-}
-
-#removeUnusedLoopDevice [source file]
-#Ensure that the loop device corresponding to the given source file is unused inside the VM where this function is executed and remove it, if so.
-#[source file]: as passed to openC
-#returns: An exit code of 0, if and only if the corresponding loop device is not used by this VM.
-function removeUnusedLoopDevice {
-local sourceFile="$1"
-local out=""
-out="$(losetup -j "$sourceFile")" || exit 1
-local loopCnt="$(echo "$out" | wc -l)"
-[ ${loopCnt:-0} -eq 1 ] || exit 2
-local loop="${out%%:*}"
-
-#NOTE: losetup -d only _asks_ the kernel to remove the loop, if it's unused --> we need to give the kernel some time & check whether it was removed
-losetup -d "$loop" || exit 3
-sleep 0.1
-out="$(losetup -j "$sourceFile")" || exit 4
-[ -z "$out" ] && exit 0 || exit 5
 }
 
 #getKeyPath [vm] [key ID]
@@ -437,12 +417,7 @@ case $? in
 		;;
 	7)
 		#existing loop device
-		#make sure the loop device is *not* used by Qubes OS: all qcrypt close operations remove it, but if the user manually shuts down all destination VMs, we can work around it
-		local qDev=
-		qDev="$(b_dom0_getQvmBlockInfo "" "device id" "backend" "$sourceVM" "description" "$sourceFile" "used by" "")" || { B_ERR="$sourceFile inside $sourceVM is already in use by Qubes OS. Please check qvm-block ls. Backing off..." ; B_E }
-
-		#make sure the loop device is not locally used
-		b_silence b_dom0_execFuncIn "$sourceVM" "" "removeUnusedLoopDevice" - - "$sourceFile" || { B_ERR="The loop device mapped to $sourceFile inside the $sourceVM VM appears to be locally used. Thus backing off..." ; B_E }
+		b_dom0_removeUnusedLoopDevice "$sourceVM" "$sourceFile" 1 || { B_ERR="$sourceFile inside $sourceVM is either in use by Qubes OS or by the VM itself. Please check qvm-block ls. Backing off..." ; B_E }
 
 		#all good
 		;;
