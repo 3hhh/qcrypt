@@ -20,7 +20,8 @@
 #
 
 #init blib
-source blib || { >&2 echo "This script depends on blib (https://github.com/3hhh/blib). Please install blib first." ; exit 1 ; }
+source blib
+b_checkVersion 1 2 || { >&2 echo "This script depends on blib (https://github.com/3hhh/blib) version 1.2 or higher. Please install a supported version." ; exit 1 ; }
 eval "$B_SCRIPT"
 b_import "args"
 b_import "traps"
@@ -429,7 +430,7 @@ fi
 
 #create a source device if needed
 b_info "Preparing the source VM ${sourceVM}..."
-b_silence b_dom0_execFuncIn "$sourceVM" "" getSourceDeviceType "$sourceFile"
+b_silence b_dom0_execFuncIn "$sourceVM" "" "getSourceDeviceType" - - "$sourceFile"
 case $? in
 	0)
 		#all good
@@ -441,7 +442,7 @@ case $? in
 		qDev="$(b_dom0_getQvmBlockInfo "" "device id" "backend" "$sourceVM" "description" "$sourceFile" "used by" "")" || { B_ERR="$sourceFile inside $sourceVM is already in use by Qubes OS. Please check qvm-block ls. Backing off..." ; B_E }
 
 		#make sure the loop device is not locally used
-		b_silence b_dom0_execFuncIn "$sourceVM" "" removeUnusedLoopDevice "$sourceFile" || { B_ERR="The loop device mapped to $sourceFile inside the $sourceVM VM appears to be locally used. Thus backing off..." ; B_E }
+		b_silence b_dom0_execFuncIn "$sourceVM" "" "removeUnusedLoopDevice" - - "$sourceFile" || { B_ERR="The loop device mapped to $sourceFile inside the $sourceVM VM appears to be locally used. Thus backing off..." ; B_E }
 
 		#all good
 		;;
@@ -721,7 +722,7 @@ local ret=
 
 echo -n "INFO: Closing the loop device inside $sourceVM... "
 b_setBE 1
-b_dom0_execFuncIn "$sourceVM" "" "detachLoop" "$sourceFile" &> /dev/null
+b_dom0_execFuncIn "$sourceVM" "" "detachLoop" - - "$sourceFile" &> /dev/null
 ret=$?
 b_resetErrorHandler
 if [ $ret -eq 17 ] ; then
@@ -784,7 +785,7 @@ for ((i=${#dsts[@]}-1;i >= 0;i--)) ; do
 	#close
 	echo -n "INFO: Closing the dm-crypt device inside ${vm}... "
 	b_setBE 1
-	b_dom0_execFuncIn "$vm" "" "closeDecryptedData" "$mapperName" &> /dev/null
+	b_dom0_execFuncIn "$vm" "" "closeDecryptedData" - - "$mapperName" &> /dev/null
 	ret=$?
 	b_resetErrorHandler
 	case $ret in
@@ -1000,7 +1001,7 @@ echo " $sourceVM"
 if qvm-check --running "$sourceVM" &> /dev/null ; then
        	runningStat="yes"
 
-	b_silence b_dom0_execFuncIn "$sourceVM" "" "getSourceDeviceType" "$sourceFile"
+	b_silence b_dom0_execFuncIn "$sourceVM" "" "getSourceDeviceType" - - "$sourceFile"
 	case $? in
 		0)
 			stat="file, no loop device created"
@@ -1078,7 +1079,7 @@ for dst in "${DSTS[@]}" ; do
 
 	#key available, device decrypted, mounted?
 	local tRet=
-	b_silence b_dom0_execFuncIn "$dst" "" getVMStatus "$keyPath" "$keyId" "$devName" "$mountPoint"
+	b_silence b_dom0_execFuncIn "$dst" "" "getVMStatus" - - "$keyPath" "$keyId" "$devName" "$mountPoint"
 	tRet=$?
 	local statDev=""
 	local statMounted="no"
@@ -1311,7 +1312,7 @@ for cand in "${S_CAND[@]}" ; do
 			nextHop="${S_HOPS["${cand}_next_$j"]}"
 			nextHopCrypt="${S_DATA["${nextHop}_device id"]}"
 			#NOTE: we do not retrieve data to dom0 for security reasons (except for the status code)
-			if ! b_silence b_dom0_execFuncIn "${S_DATA["${nextHop}_backend"]}" "" "cryptoDeviceMatches" "$candFrontend" "$nextHopCrypt" ; then
+			if ! b_silence b_dom0_execFuncIn "${S_DATA["${nextHop}_backend"]}" "" "cryptoDeviceMatches" - - "$candFrontend" "$nextHopCrypt" ; then
 				S_HOPS["${cand}_next_$j"]=""
 			fi
 		else

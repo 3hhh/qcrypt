@@ -172,7 +172,7 @@ function postOpenChecks {
 
 	#make sure that we cannot write, if r/o
 	if [ -n "$mp" ] && [ $ro -eq 0 ] ; then
-		runSL b_dom0_execFuncIn "$target" "" "readOnlyTest" "$mp"
+		runSL b_dom0_execFuncIn "$target" "" "readOnlyTest" - - "$mp"
 		[ $status -eq 0 ]
 		[ -n "$output" ]
 	fi

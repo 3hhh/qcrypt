@@ -20,7 +20,8 @@
 #
 
 #init blib
-source blib || { >&2 echo "This script depends on blib (https://github.com/3hhh/blib). Please install blib first." ; exit 1 ; }
+source blib
+b_checkVersion 1 2 || { >&2 echo "This script depends on blib (https://github.com/3hhh/blib) version 1.2 or higher. Please install a supported version." ; exit 1 ; }
 eval "$B_SCRIPT"
 b_import "arr"
 b_import "args"
