@@ -394,17 +394,17 @@ ensureClosed "$sourceVM" "$sourceFile" "$keyId" "${DSTS[@]}"
 
 #start all necessary VMs or check that they are running
 if [ $autostart -eq 0 ] ; then
-	echo -n "INFO: Starting the VMs $sourceVM ${DSTS[@]}... "
+	b_info "Starting the VMs $sourceVM ${DSTS[@]}... " 0 1
 	b_dom0_ensureRunning "$sourceVM" "${DSTS[@]}"
-	echo "Done."
+	b_info "Done." 1 0
 else
 	#check source & dest and only autostart intermediate VMs
 	b_dom0_isRunning "$sourceVM" "${DSTS[-1]}"
 	declare -a interm=("${DSTS[@]::${#DSTS[@]}-1}")
 	if [ ${#interm[@]} -gt 0 ] ; then
-		echo -n "INFO: Starting the intermediate VMs ${interm[@]}... "
+		b_info "Starting the intermediate VMs ${interm[@]}... " 0 1
 		b_dom0_ensureRunning "${interm[@]}"
-		echo "Done."
+		b_info "Done." 1 0
 	fi
 fi
 
@@ -436,7 +436,7 @@ local keyPath=""
 for injTarget in "${!injections[@]}" ; do
 	injKey="${injections["$injTarget"]}"
 	keyPath="$(getKeyPath "$injTarget" "$keyId")"
-	echo -n "INFO: Injecting the dom0 key $injKey into the VM $injTarget ($keyPath)... "
+	b_info "Injecting the dom0 key $injKey into the VM $injTarget ($keyPath)... " 0 1
 	local ret=2
 	b_setBE 1
 	#NOTE: we never overwrite!
@@ -444,14 +444,14 @@ for injTarget in "${!injections[@]}" ; do
 	ret=$?
 	b_resetErrorHandler 1
 	if [ $ret -eq 0 ] ; then
-		echo "Done."
+		b_info "Done." 1 0
 	else
 		if [[ "$B_ERR" == *"blib_dom0_copyPrepareTarget failed"* ]] ; then
 			#ignore errors caused due to existing files
 			B_ERR=""
-			echo "Likely injected before."
+			b_info "Likely injected before." 1 0
 		else
-			echo "Failed."
+			b_info "Failed." 1 0
 			B_E
 		fi
 	fi
@@ -695,15 +695,15 @@ local sourceVM="$1"
 local sourceFile="$2"
 local ret=
 
-echo -n "INFO: Closing the loop device inside $sourceVM... "
+b_info "Closing the loop device inside $sourceVM... " 0 1
 b_setBE 1
 b_dom0_execFuncIn "$sourceVM" "" "detachLoop" - - "$sourceFile" &> /dev/null
 ret=$?
 b_resetErrorHandler
 if [ $ret -eq 17 ] ; then
-	echo "No loop device found. All good."
+	b_info "No loop device found. All good." 1 0
 elif [ $ret -eq 0 ] ; then
-	echo "Done."
+	b_info "Done." 1 0
 else
 	#last action, no need for force
 	B_ERR="Failed to close."
@@ -734,19 +734,19 @@ printf -v mapperNameEsc '%q' "$mapperName"
 local err=""
 local dst="${dsts[@]: -1}"
 local ret=-1
-echo -n "INFO: Umounting the plaintext device inside ${dst}... "
+b_info "Umounting the plaintext device inside ${dst}... " 0 1
 local cmd="findmnt -n -o TARGET -S /dev/mapper/$mapperNameEsc | head -n1 | xargs umount -A -R || exit 17"
 b_setBE 1
 b_dom0_qvmRun "$dst" "$cmd" &> /dev/null
 ret=$?
 b_resetErrorHandler
 if [ $ret -eq 17 ] ; then
-	echo "Was not mounted. All good."
+	b_info "Was not mounted. All good." 1 0
 elif [ $ret -eq 0 ] ; then
-	echo "Done."
+	b_info "Done." 1 0
 else
 	err="Failed to umount."
-	[ $force -eq 0 ] && echo "$err Proceeding anyway..." || { B_ERR="$err No point in proceeding." ; B_E }
+	[ $force -eq 0 ] && b_info "$err Proceeding anyway..." 1 0 || { B_ERR="$err No point in proceeding." ; B_E }
 fi
 
 #cryptsetup close & detach afterwards in all VMs (if necessary)
@@ -758,21 +758,21 @@ for ((i=${#dsts[@]}-1;i >= 0;i--)) ; do
 	local vm="${dsts[$i]}"
 
 	#close
-	echo -n "INFO: Closing the dm-crypt device inside ${vm}... "
+	b_info "Closing the dm-crypt device inside ${vm}... " 0 1
 	b_setBE 1
 	b_dom0_execFuncIn "$vm" "" "closeDecryptedData" - - "$mapperName" &> /dev/null
 	ret=$?
 	b_resetErrorHandler
 	case $ret in
 		0)
-			echo "Done."
+			b_info "Done." 1 0
 			;;
 		11)
-			echo "Was not open. All good."
+			b_info "Was not open. All good." 1 0
 			;;
 		*)
 			err="Failed to close the dm-crypt device (status: $ret)."
-			[ $force -eq 0 ] && echo "$err Proceeding anyway..." || { B_ERR="$err No point in proceeding." ; B_E }
+			[ $force -eq 0 ] && b_info "$err Proceeding anyway..." 1 0 || { B_ERR="$err No point in proceeding." ; B_E }
 	esac
 
 	#detach
@@ -787,25 +787,25 @@ for ((i=${#dsts[@]}-1;i >= 0;i--)) ; do
 	#	qvm-block d testing-pers disp287:loop0
 	#--> resulting in an empty "used by" column
 	[ $i -eq 0 ] && desc="$sourceFile" || desc="$mapperName"
-	echo -n "INFO: Detaching the device from the VM $vm... "
+	b_info "Detaching the device from the VM $vm... " 0 1
 	local backend=""
 	backend="$(b_dom0_getQvmBlockInfo "$qvmBlockInfo" "id" "description" "$desc" "used by" "$vm")"
 	[ $? -eq $B_RC ] && { B_ERR="Failed to parse qvm-block ls." ; B_E }
 	if [ -z "$backend" ] ; then
-		echo "Was not attached. All good."
+		b_info "Was not attached. All good." 1 0
 	else
 		qvm-block d "$vm" "$backend" &> /dev/null
 		if [ $? -eq 0 ] ; then
-			echo "Done."
+			b_info "Done." 1 0
 		else
 			if [ $shutdown -eq 0 ] ; then
 				#similar to what --force does, but we attempted to properly detach it before
-				echo -n "Failed, trying to shutdown... "
+				b_info "Failed, trying to shutdown... " 1 1
 				b_dom0_ensureHalted "$vm"
-				echo "Done."
+				b_info "Done." 1 0
 			else
 				err="Failed to detach the backend $backend from the VM $vm. No point in proceeding."
-				[ $force -eq 0 ] && echo "$err Proceeding anyway..." || { B_ERR="$err No point in proceeding." ; B_E }
+				[ $force -eq 0 ] && b_info "$err Proceeding anyway..." 1 0 || { B_ERR="$err No point in proceeding." ; B_E }
 			fi
 		fi
 	fi
@@ -833,12 +833,12 @@ for ((i=${#dsts[@]}-1;i >= 0;i--)) ; do
 	#NOTES:
 	# - using qvm-block in any way is likely to trigger Qubes OS bug #4784
 	# - we better shut down one after another as this will give Qubes OS some time to do the device detach cleanup (and in order)
-	echo -n "INFO: Shutting down the VM ${vm}... "
+	b_info "Shutting down the VM ${vm}... " 0 1
 	b_dom0_ensureHalted "$vm"
 
 	#give Qubes OS some time to clean up the mess (i.e. do the detach)
 	sleep 0.2
-	echo "Done."
+	b_info "Done." 1 0
 done
 
 closeSourceLoop "$sourceVM" "$sourceFile"
@@ -866,10 +866,10 @@ local allUp=
 #make sure the given chain is valid by checking its status
 #NOTE: we also check that the chain is mounted as it might otherwise be incomplete (missing target VM) and we don't want a partial closure
 if [ $force -ne 0 ] ; then
-	echo -n "INFO: Checking the validity of the chain... "
+	b_info "Checking the validity of the chain... " 0 1
 	local state=""
 	state="$(b_args_parse "status" "$sourceVM" "$sourceFile" "$keyId" "${DSTS[@]}" ; statusSingleC)" || { B_ERR="The chain has a bad status - check it below. If you want to continue nonetheless, use --force."$'\n'"$state" ; B_E }
-	echo "Done. All good."
+	b_info "Done. All good." 1 0
 	cleanClose "$force" "$shutdown" "$sourceVM" "$sourceFile" "$keyId" "${DSTS[@]}"
 else
 	b_info "Force mode. Thus attempting a dirty close..."
