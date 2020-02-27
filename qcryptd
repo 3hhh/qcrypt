@@ -97,7 +97,7 @@ Usage: $B_SCRIPT_NAME [options] [command]
 
 Automatically manage qcrypt chains on VM starts/stops as well as device attachments.
 
-The daemon must be configured via ini files at the below configuration directory  before it can be used. Each configuration file represents
+The daemon must be configured via ini files at the below configuration directory before it can be used. Each configuration file represents
 a single chain. You can find configuration examples inside the 'examples' directory.
 
 Configuration directories:
