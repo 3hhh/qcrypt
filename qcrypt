@@ -67,7 +67,7 @@ For most threat models it should suffice to have 1-2 layers of encryption. Each 
 [key id]		 An identifying string for the keys to use. Each VM must have its own key saved under that identifier.
 			 The identifier is the same for all VMs though. Keys are stored locally inside each VM at $QCRYPT_KEYS.
 			 The identifier may only consist of numbers and characters.
-			 If you lose them, you lose all encrypted data. So better create a backup.
+			 If you lose the keys, you lose all encrypted data. So better create a backup.
 
 [destination vm 1 .. n]	 Layer of VMs to use for decryption in exactly that order. Each VM must have a matching decryption key.
 			 Recommendation: All destination VMs except of the final one should be dedicated to this particular qcrypt chain as
