@@ -360,7 +360,7 @@ declare -A injections
 local sourceVM="$(b_args_get 1)"
 
 local sourceFile=
-sourceFile="$(getCanonicalFileParameter)" || { B_ERR="Failed to canonicalize the source file parameter. Original error: $sourceFile" ; B_E }
+sourceFile="$(getCanonicalFileParameter)" || { B_ERR="Failed to canonicalize the source file parameter." ; B_E }
 
 local keyId="$(b_args_get 3)"
 
@@ -385,7 +385,7 @@ while b_args_getOption "--inj" "" "$i" > /dev/null ; do
 done
 
 local coptStr=
-coptStr="$(parseCryptsetupParams "copt" "${DSTS[@]}")" || { B_ERR="Failed to parse the cryptsetup parameters. Original error: $coptStr" ; B_E }
+coptStr="$(parseCryptsetupParams "copt" "${DSTS[@]}")" || { B_ERR="Failed to parse the cryptsetup parameters." ; B_E }
 eval "$coptStr" || { B_ERR="Programming error?!" ; B_E }
 
 #make sure that the open doesn't f*ck things up
@@ -539,7 +539,7 @@ function luksInitC {
 #parse params
 local sourceVM="$(b_args_get 1)"
 local sourceFile=
-sourceFile="$(getCanonicalFileParameter)" || { B_ERR="Failed to canonicalize the source file parameter. Original error: $sourceFile" ; B_E }
+sourceFile="$(getCanonicalFileParameter)" || { B_ERR="Failed to canonicalize the source file parameter." ; B_E }
 local keyId="$(b_args_get 3)"
 parseDestinations
 
@@ -570,7 +570,7 @@ fi
 local fsType="$(b_args_getOption "--fs" "ext4")"
 
 local coptStr=
-coptStr="$(parseCryptsetupParams "copt" "${DSTS[@]}")" || { B_ERR="Failed to parse the cryptsetup parameters. Original error: $coptStr" ; B_E }
+coptStr="$(parseCryptsetupParams "copt" "${DSTS[@]}")" || { B_ERR="Failed to parse the cryptsetup parameters." ; B_E }
 eval "$coptStr" || { B_ERR="Programming error?!" ; B_E }
 
 #safety checks
@@ -858,7 +858,7 @@ b_args_getOption "--sd" > /dev/null && shutdown=0
 
 local sourceVM="$(b_args_get 1)"
 local sourceFile=
-sourceFile="$(getCanonicalFileParameter)" || { B_ERR="Failed to canonicalize the source file parameter. Original error: $sourceFile" ; B_E }
+sourceFile="$(getCanonicalFileParameter)" || { B_ERR="Failed to canonicalize the source file parameter." ; B_E }
 local keyId="$(b_args_get 3)"
 parseDestinations
 
@@ -947,7 +947,7 @@ local mountPoint="$(b_args_getOption "--mp")"
 
 local sourceVM="$(b_args_get 1)"
 local sourceFile=
-sourceFile="$(getCanonicalFileParameter)" || { B_ERR="Failed to canonicalize the source file parameter. Original error: $sourceFile" ; B_E }
+sourceFile="$(getCanonicalFileParameter)" || { B_ERR="Failed to canonicalize the source file parameter." ; B_E }
 local keyId="$(b_args_get 3)"
 parseDestinations
 
