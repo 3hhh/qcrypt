@@ -2,8 +2,8 @@
 #
 #See usage().
 #
-#Copyright (C) 2019  David Hobach  GPLv3
-#version: 0.8
+#Copyright (C) 2020  David Hobach  GPLv3
+#version: 0.9
 #
 #This program is free software: you can redistribute it and/or modify
 #it under the terms of the GNU General Public License as published by
@@ -21,12 +21,13 @@
 
 #init blib
 source blib
-b_checkVersion 1 2 || { >&2 echo "This script depends on blib (https://github.com/3hhh/blib) version 1.2 or higher. Please install a supported version." ; exit 1 ; }
+b_checkVersion 1 3 || { >&2 echo "This script depends on blib (https://github.com/3hhh/blib) version 1.3 or higher. Please install a supported version." ; exit 1 ; }
 eval "$B_SCRIPT"
 b_import "args"
 b_import "traps"
 b_import "fs"
 b_import "arr"
+b_import "keys"
 b_import "os/qubes4/dom0"
 
 #distinguish the B_E exit code from the "normal" error
@@ -87,6 +88,8 @@ open
 			 Otherwise the plaintext device is not mounted.
 	--inj [vm] [key] Inject the given [key] (full path) from dom0 into the [vm] before opening. This can be useful for disposable VMs.
 			 The parameter can be specified multiple times. Won't override existing keys.
+			 If the [key] resides inside a dom0 blib key store, you can use keystore://[store directory]. To use the default key
+			 store, just use keystore:// .
 	--cy [vm] [opt]	 Pass the options [opt] to cryptsetup when the encrypted device for the given [vm] is opened. This parameter may be
 			 specified multiple times. Multiple options can be concatenated; spaces in arguments may require escaping though. Should
 			 be used by experts only.
@@ -117,7 +120,9 @@ luksInit
 	--wd [dir] 	 Use the given directory in dom0 for all files temporarily created during the init process (default: /tmp/). Its capacity
 			 must be larger than the --size parameter. /tmp/ in Qubes OS usually only fits 2G.
 	--ks [size]	 Size of the keys to deploy in bytes (default: 100).
-	--bak [folder]	 Create a backup of all keys in dom0 in the given folder (default: no backup).
+	--bak [folder]	 Create an unencrypted backup of all keys in the given dom0 folder (default: no backup).
+	--keystore [dir] Copy all keys to the encrypted blib key store found inside the dom0 directory [dir] (default: not used).
+			 Use '//' for the default key store at $(b_keys_getDefaultStore).
 	--fs [type]	 Generate the given file system type with mkfs in the decrypted container (default: ext4).
 	--enkey [device] Block device to use as entropy source for the key generation (default: /dev/random).
 	--encon [device] Block device to use as entropy source for the container initialization (default: /dev/urandom).
@@ -200,7 +205,7 @@ echo "${QCRYPT_KEYS/#~/\/home\/$vmUser}/$keyId"
 #Parse all arguments of this script, apply some normalisations and do some preliminary option checks.
 #@B_E
 function parseAndCheckArgs {
-b_args_init 0 "--mp" 1 "--inj" 2 "--size" 1 "--wd" 1 "--ks" 1 "--bak" 1 "--fs" 1 "--enkey" 1 "--encon" 1 "--cy" 2
+b_args_init 0 "--mp" 1 "--inj" 2 "--size" 1 "--wd" 1 "--ks" 1 "--bak" 1 "--fs" 1 "--enkey" 1 "--encon" 1 "--cy" 2 "--keystore" 1
 b_args_setOptionParamSeparator "<aosep>"
 b_args_parse "$@"
 
@@ -240,7 +245,7 @@ case "$cmd" in
 
 	"luksInit")
 		#NOTE: we must also check for the supported luksFormat options here
-		b_args_assertOptions "-a" "--size" "--wd" "--ks" "--bak" "--fs" "--enkey" "--encon" "--cy"
+		b_args_assertOptions "-a" "--size" "--wd" "--ks" "--bak" "--fs" "--enkey" "--encon" "--cy" "--keystore"
 		;;
 
 	"close")
@@ -349,6 +354,30 @@ done
 return 0
 }
 
+#retrieveFromKeyStore run as root
+function retrieveFromKeyStore_root {
+local vm="$1"
+local keyId="$2"
+local storeDir="$3"
+
+b_keys_init "$B_SCRIPT_NAME" 0 "" "" "" "$storeDir"
+b_keys_get "${vm}_$keyId"
+}
+
+#retrieveFromKeyStore [vm] [key id] [store dir]
+#Retrieve the path to the given key in dom0 from the key store.
+#[vm]: VM for which to get the key.
+#[key id]: ID of the given key.
+#[store dir]: Directory of the key store to use (optional).
+#returns: Path to the key (may not exist) and sets a zero exit code on success.
+#@B_E
+function retrieveFromKeyStore {
+local vm="$1"
+local keyId="$2"
+local storeDir="$3"
+b_execFuncAs "root" "retrieveFromKeyStore_root" "fs" "multithreading/mtx" "dmcrypt" "keys" - - "$@" || { B_ERR="Failed to retrieve the key $keyId for the VM $vm from the key store $storeDir." ; B_E }
+}
+
 #see open @usage
 #@B_E
 function openC {
@@ -379,8 +408,12 @@ while b_args_getOption "--inj" "" "$i" > /dev/null ; do
 	injTarget="$(b_args_getOption "--inj" "" "$i" 0)" || { B_ERR="Failed to retrieve the target VM for the injection $i." ; B_E }
 	injKey="$(b_args_getOption "--inj" "" "$i" 1)" || { B_ERR="Failed to retrieve the key for the injection $i." ; B_E }
 	b_arr_contains "$injTarget" "${DSTS[@]}" || { B_ERR="The injection VM $injTarget is not part of the destination VMs." ; B_E }
+	if [[ "$injKey" == "keystore://"* ]] ; then
+		local storeDir="${injKey#keystore://}"
+		injKey="$(retrieveFromKeyStore "$injTarget" "$keyId" "$storeDir")" || { B_ERR="Could not resolve injection: Failed to retrieve the key $keyId for the VM $injTarget from the key store $storeDir." ; B_E }
+	fi
 	injections["$injTarget"]="$injKey"
-	[ -f "$injKey" ] || { B_ERR="No file: $injKey" ; B_E }
+	[ -f "$injKey" ] || { B_ERR="No such file: $injKey" ; B_E }
 	i=$(($i +1))
 done
 
@@ -567,6 +600,12 @@ if [ -n "$keyBackupFolder" ] ; then
 	[ -d "$keyBackupFolder" ] || { B_ERR="No directory: $keyBackupFolder" ; B_E }
 fi
 
+local keyStore="$(b_args_getOption "--keystore")"
+if [ -n "$keyStore" ] ; then
+	[[ "$keyStore" == "//" ]] && keyStore="$(b_keys_getDefaultStore)"
+	[ ! -d "$keyStore" ] && [ -e "$keyStore" ] && B_ERR="No directory: $keyStore" && B_E
+fi
+
 local fsType="$(b_args_getOption "--fs" "ext4")"
 
 local coptStr=
@@ -651,6 +690,17 @@ if [ -n "$keyBackupFolder" ] ; then
 		[ -e "$bakFile" ] && B_ERR="A file called $bakFile already exists. Rejecting to overwrite." && B_E
 		cp "$dom0KeyFile" "$bakFile" || { B_ERR="Failed to copy the key file $dom0KeyFile to $bakFile." ; B_E }
 		chmod 666 "$bakFile"
+	done
+fi
+
+#optional: copy the keys to the key store
+if [ -n "$keyStore" ] ; then
+	b_info "Adding the keys to the blib key store $keyStore..."
+	b_keys_init "$B_SCRIPT_NAME" 0 "" "" "" "$keyStore"
+
+	for dst in "${DSTS[@]}" ; do
+		dom0KeyFile="${dom0KeyFiles["$dst"]}"
+		b_keys_add "${dst}_$keyId" "$dom0KeyFile" 0
 	done
 fi
 
