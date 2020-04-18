@@ -409,7 +409,7 @@ while b_args_getOption "--inj" "" "$i" > /dev/null ; do
 	injKey="$(b_args_getOption "--inj" "" "$i" 1)" || { B_ERR="Failed to retrieve the key for the injection $i." ; B_E }
 	b_arr_contains "$injTarget" "${DSTS[@]}" || { B_ERR="The injection VM $injTarget is not part of the destination VMs." ; B_E }
 	if [[ "$injKey" == "keystore://"* ]] ; then
-		local storeDir="${injKey#keystore://}"
+		local storeDir="${injKey#keystore:/}"
 		injKey="$(retrieveFromKeyStore "$injTarget" "$keyId" "$storeDir")" || { B_ERR="Could not resolve injection: Failed to retrieve the key $keyId for the VM $injTarget from the key store $storeDir." ; B_E }
 	fi
 	injections["$injTarget"]="$injKey"
