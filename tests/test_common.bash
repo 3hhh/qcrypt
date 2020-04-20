@@ -23,7 +23,8 @@ function setupQcryptTesting {
 
 	[ -z "$UTD_QUBES_TESTVM" ] && skip "Please specify a static disposable test VM as UTD_QUBES_TESTVM in your user data file $USER_DATA_FILE."
 
-	b_import "/os/qubes4/dom0"
+	b_import "os/qubes4/dom0"
+	b_import "keys"
 
 	#re-use the same VMs for all tests, use fresh ones if some test kills them
 	loadBlibTestState
@@ -31,6 +32,9 @@ function setupQcryptTesting {
 	echo "QCRYPT_VM_1 = ${TEST_STATE["QCRYPT_VM_1"]}"
 	echo "QCRYPT_VM_2 = ${TEST_STATE["QCRYPT_VM_2"]}"
 	echo "UTD_QUBES_TESTVM = $UTD_QUBES_TESTVM"
+
+	#set the GUI mode to non-GUI (we don't want popups)
+	export QCRYPT_UI_MODE="tty"
 }
 
 #recreateTestVMsIfNeeded
@@ -45,7 +49,7 @@ function recreateTestVMsIfNeeded {
 	fi
 }
 
-function skipIfNotRoot {
+function skipIfNotRealRoot {
 	[[ "$(whoami)" != "root" ]] && skip "This test must be run as root."
 	return 0
 }
@@ -189,8 +193,9 @@ function postCloseChecks {
 	shift 2
 
 	local numDst=$(( $# -3 ))
-	#expected status: device not attached & not decrypted for each VM (VMs running & keys available though), not mounted in target VM, no loop device in source VM anymore
-	local eStatus=$(( $numDst * 2 + 2 ))
+	#expected status: device not attached & not decrypted for each VM (VMs running & keys available though), no loop device in source VM anymore
+	local eStatus=$(( $numDst * 2 + 1 ))
+	[ -n "$mp" ] && ((++eStatus)) #NOTE: for simplicity, --mp "" and no mount point are not distinguished here
 
 	#add run status info
 	declare -a vms=("$sourceVM" "${@:4}")

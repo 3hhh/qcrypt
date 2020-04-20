@@ -2,8 +2,8 @@
 # 
 #+Bats tests for qcrypt.
 #+
-#+Copyright (C) 2019  David Hobach  GPLv3
-#+0.6
+#+Copyright (C) 2020  David Hobach  GPLv3
+#+0.7
 
 load "test_common"
 
@@ -107,7 +107,7 @@ function postInitChecks {
 }
 
 @test "luksInit (have a coffee...)" {
-	skipIfNotRoot
+	skipIfNotRealRoot
 
 	#failing tests
 	
@@ -245,8 +245,57 @@ function postInitChecks {
 	[[ "$output" != *"ERROR"* ]]
 	postCloseChecks 0 "/mnt" "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/kstest" "tstkey-ks" "${TEST_STATE["QCRYPT_VM_2"]}" "$UTD_QUBES_TESTVM"
 
+	#luksInit with a key store
+	rm -f "$bak"/*
+	store="$(mktemp -d)"
+	local pass="passw0rd!"
+	local kid="my-testkey-id"
+	#NOTE: we pass the password twice: one for creation, one for opening
+	echo "$pass"$'\n'"$pass" | {
+		runSL "$QCRYPT" --size "$s" --keystore "$store" --wd "$wd" --bak "$bak" luksInit "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/keystore-test" "$kid" "$UTD_QUBES_TESTVM"
+		echo "$output"
+		[ $status -eq 0 ]
+		[ -n "$output" ]
+		[[ "$output" != *"ERROR"* ]]
+		}
+	[ -f "$store/keys.lks" ]
+	postInitChecks "$wd" "$bak" 100 "" "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/keystore-test" "$kid" "$UTD_QUBES_TESTVM"
+
+	#open with keystore
+	echo "open & close checks with a key store:"
+	#delete copied key
+	local user=
+	user="$(qvm-prefs "$UTD_QUBES_TESTVM" default_user)"
+	local path=
+	printf -v path '%q' "/home/$user/.qcrypt/keys/$kid"
+	runSL b_dom0_execStrIn "$UTD_QUBES_TESTVM" "rm -f $path"
+	[ $status -eq 0 ]
+	[ -z "$output" ]
+
+	#make sure the key is gone
+	runSL "$QCRYPT" status "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/keystore-test" "$kid" "$UTD_QUBES_TESTVM"
+	echo "$output"
+	[ $status -ne 0 ]
+	local re='key available:[ ]+no'
+	[[ "$output" =~ $re ]]
+
+	runSL "$QCRYPT" --inj "$UTD_QUBES_TESTVM" "keystore:/$store" open "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/keystore-test" "$kid" "$UTD_QUBES_TESTVM"
+	echo "$output"
+	[ $status -eq 0 ]
+	[[ "$output" == *"Open done."* ]]
+	[[ "$output" != *"ERROR"* ]]
+	postOpenChecks 1 1 "" "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/keystore-test" "$kid" "$UTD_QUBES_TESTVM"
+
+	runSL "$QCRYPT" close "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/keystore-test" "$kid" "$UTD_QUBES_TESTVM"
+	echo "$output"
+	[ $status -eq 0 ]
+	[[ "$output" == *"Close done."* ]]
+	[[ "$output" != *"ERROR"* ]]
+	postCloseChecks 0 "" "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/keystore-test" "$kid" "$UTD_QUBES_TESTVM"
+
 	#cleanup
-	rm -rf "$bak" "$bak2" "$wd"
+	b_keys_close "$store"
+	rm -rf "$bak" "$bak2" "$wd" "$store"
 }
 
 #runForceClose [source VM] [source file] [key id] [destination vm 1] ... [destination vm n]
@@ -359,8 +408,9 @@ function testStatusAll {
 	[ $status -eq 0 ]
 }
 
-#testSuccStatus [# of dst VMs] [status parameters]
-function testSuccStatus {
+#testSuccAllStatus [# of dst VMs] [status parameters]
+#only use this if the device is also supposed to be mounted
+function testSuccAllStatus {
 	local re=
 	local dstCnt="$1"
 	shift
@@ -415,7 +465,9 @@ function testFailStatus {
 		[ $noCnt -gt 0 ]
 		[ $(( $yesCnt + $noCnt )) -eq $maxCnt ]
 
-		[ $status -ge $noCnt ]
+		#the "device mounted: no" may be ok, if --mp was not specified
+		local minStat=$(( $noCnt -1 ))
+		[ $status -ge $minStat ]
 	fi
 	
 	return 0
@@ -423,15 +475,15 @@ function testFailStatus {
 
 @test "status - single" {
 	#correct status for the two open chains
-	testSuccStatus 1 --mp "/mnt" -- "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/1layer01" "1layer01" "${TEST_STATE["QCRYPT_VM_2"]}"
-	testSuccStatus 2 --mp "/mnt" -- "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/2layer01" "2layer01" "${TEST_STATE["QCRYPT_VM_2"]}" "$UTD_QUBES_TESTVM"
-	testSuccStatus 1 -- "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/1layer01" "1layer01" "${TEST_STATE["QCRYPT_VM_2"]}"
-	testSuccStatus 2 -- "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/2layer01" "2layer01" "${TEST_STATE["QCRYPT_VM_2"]}" "$UTD_QUBES_TESTVM"
+	testSuccAllStatus 1 --mp "/mnt" -- "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/1layer01" "1layer01" "${TEST_STATE["QCRYPT_VM_2"]}"
+	testSuccAllStatus 2 --mp "/mnt" -- "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/2layer01" "2layer01" "${TEST_STATE["QCRYPT_VM_2"]}" "$UTD_QUBES_TESTVM"
+	testSuccAllStatus 1 -- "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/1layer01" "1layer01" "${TEST_STATE["QCRYPT_VM_2"]}"
+	testSuccAllStatus 2 -- "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/2layer01" "2layer01" "${TEST_STATE["QCRYPT_VM_2"]}" "$UTD_QUBES_TESTVM"
 
 	#status should also work with // somewhere (happens quite often in programs)
-	testSuccStatus 1 -- "${TEST_STATE["QCRYPT_VM_1"]}" "//tmp/1layer01" "1layer01" "${TEST_STATE["QCRYPT_VM_2"]}"
-	testSuccStatus 1 -- "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp//1layer01" "1layer01" "${TEST_STATE["QCRYPT_VM_2"]}"
-	testSuccStatus 1 -- "${TEST_STATE["QCRYPT_VM_1"]}" "//tmp//1layer01" "1layer01" "${TEST_STATE["QCRYPT_VM_2"]}"
+	testSuccAllStatus 1 -- "${TEST_STATE["QCRYPT_VM_1"]}" "//tmp/1layer01" "1layer01" "${TEST_STATE["QCRYPT_VM_2"]}"
+	testSuccAllStatus 1 -- "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp//1layer01" "1layer01" "${TEST_STATE["QCRYPT_VM_2"]}"
+	testSuccAllStatus 1 -- "${TEST_STATE["QCRYPT_VM_1"]}" "//tmp//1layer01" "1layer01" "${TEST_STATE["QCRYPT_VM_2"]}"
 	
 	
 	#status for invalid & incomplete chains
@@ -452,11 +504,17 @@ function testFailStatus {
 	runSL b_dom0_qvmRun "$UTD_QUBES_TESTVM" "umount /mnt"
 	[ $status -eq 0 ]
 	[ -z "$output" ]
-	testFailStatus 1 2 -- "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/2layer01" "2layer01" "${TEST_STATE["QCRYPT_VM_2"]}" "$UTD_QUBES_TESTVM"
+	#NOTE: without --mp specified, an unmounted end device should not cause a non-zero exit code, with --mp (mount checking), it should
+	runSL "$QCRYPT" status -- "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/2layer01" "2layer01" "${TEST_STATE["QCRYPT_VM_2"]}" "$UTD_QUBES_TESTVM"
+	[ $status -eq 0 ]
+	local re='device mounted:[ ]+no'
+	[[ "$output" =~ $re ]]
+	[[ "$output" != *"ERROR"* ]]
+	testFailStatus 1 2 --mp "" -- "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/2layer01" "2layer01" "${TEST_STATE["QCRYPT_VM_2"]}" "$UTD_QUBES_TESTVM"
 	runSL b_dom0_qvmRun "$UTD_QUBES_TESTVM" "cryptsetup close /dev/mapper/2layer01"
 	[ $status -eq 0 ]
 	[ -z "$output" ]
-	testFailStatus 2 2 -- "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/2layer01" "2layer01" "${TEST_STATE["QCRYPT_VM_2"]}" "$UTD_QUBES_TESTVM"
+	testFailStatus 2 2 --mp "" -- "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/2layer01" "2layer01" "${TEST_STATE["QCRYPT_VM_2"]}" "$UTD_QUBES_TESTVM"
 }
 
 @test "close" {
@@ -533,7 +591,7 @@ function testFailStatus {
 	[[ "$output" == *"Open done."* ]]
 	[[ "$output" != *"ERROR"* ]]
 	postOpenChecks 1 0 "/mntpartial" "${TEST_STATE["QCRYPT_VM_2"]}" "/tmp/1layer01" "1layer01" "${TEST_STATE["QCRYPT_VM_1"]}"
-	testSuccStatus 1 -- "${TEST_STATE["QCRYPT_VM_2"]}" "/tmp/1layer01" "1layer01" "${TEST_STATE["QCRYPT_VM_1"]}"
+	testSuccAllStatus 1 -- "${TEST_STATE["QCRYPT_VM_2"]}" "/tmp/1layer01" "1layer01" "${TEST_STATE["QCRYPT_VM_1"]}"
 
 	run qvm-shutdown --timeout 10 --wait "${TEST_STATE["QCRYPT_VM_1"]}"
 	echo "$output"
@@ -542,7 +600,7 @@ function testFailStatus {
 	[ $status -ne 0 ]
 
 	#status should not just error out
-	testFailStatus 5 1 -- "${TEST_STATE["QCRYPT_VM_2"]}" "/tmp/1layer01" "1layer01" "${TEST_STATE["QCRYPT_VM_1"]}"
+	testFailStatus 5 1 --mp "" -- "${TEST_STATE["QCRYPT_VM_2"]}" "/tmp/1layer01" "1layer01" "${TEST_STATE["QCRYPT_VM_1"]}"
 	[[ "$output" != *"ERROR"* ]]
 
 	#partial close should work
@@ -553,7 +611,7 @@ function testFailStatus {
 	#NOTE: ${TEST_STATE["QCRYPT_VM_1"]} is now another one...
 	[[ "${TEST_STATE["QCRYPT_VM_1"]}" != "$old1" ]]
 	[[ "${TEST_STATE["QCRYPT_VM_2"]}" == "$old2" ]]
-	testFailStatus 5 1 -- "${TEST_STATE["QCRYPT_VM_2"]}" "/tmp/1layer01" "1layer01" "${TEST_STATE["QCRYPT_VM_1"]}"
+	testFailStatus 5 1 --mp "" -- "${TEST_STATE["QCRYPT_VM_2"]}" "/tmp/1layer01" "1layer01" "${TEST_STATE["QCRYPT_VM_1"]}"
 	[[ "$output" != *"ERROR"* ]]
 }
 
