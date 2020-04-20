@@ -122,11 +122,11 @@ Please keep in mind that the `mediator-vm` may be started or stopped by qcryptd 
 
 ### But I want to use passwords?!
 
-You can e.g. create a password-protected luks container in dom0 and inject all your qcrypt key files from that container (see the `qcrypt --inj` option for further details). Or just leave them in plaintext in dom0 and create such a luks container with a 15+ character memorizable password as backup at another location.
+Both `qcrypt` and `qcryptd` support storing and retrieving your keys from a [blib](https://github.com/3hhh/blib) key store, which needs to be opened with exactly one password per boot session. Essentially it's just a password-protected luks container holding all your keys.
 
 Of course, if you ever lose that container, your keys or forget your password, you lose all of your data. So make sure to always have a backup!
 
-Also make sure _not_ to put the key file backup inside a qcrypt container...
+Also make sure _not_ to put key file backups inside a qcrypt container...
 
 ## Uninstall
 
