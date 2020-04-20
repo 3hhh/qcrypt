@@ -30,6 +30,11 @@ b_import "arr"
 b_import "keys"
 b_import "os/qubes4/dom0"
 
+#environment variable: user interaction mode (mostly for password prompts)
+#may be one of: auto|gui|tty
+#example: `export QCRYPT_UI_MODE="tty"`
+QCRYPT_UI_MODE="${QCRYPT_UI_MODE:-auto}"
+
 #distinguish the B_E exit code from the "normal" error
 B_RC=6
 
@@ -354,13 +359,18 @@ done
 return 0
 }
 
+#initKeysModule [store dir]
+function initKeysModule {
+b_keys_init "$B_SCRIPT_NAME" 0 "$QCRYPT_UI_MODE" "" "" "$1"
+}
+
 #retrieveFromKeyStore run as root
 function retrieveFromKeyStore_root {
 local vm="$1"
 local keyId="$2"
 local storeDir="$3"
 
-b_keys_init "$B_SCRIPT_NAME" 0 "" "" "" "$storeDir"
+initKeysModule "$storeDir"
 b_keys_get "${vm}_$keyId"
 }
 
@@ -696,7 +706,7 @@ fi
 #optional: copy the keys to the key store
 if [ -n "$keyStore" ] ; then
 	b_info "Adding the keys to the blib key store $keyStore..."
-	b_keys_init "$B_SCRIPT_NAME" 0 "" "" "" "$keyStore"
+	initKeysModule "$keyStore"
 
 	for dst in "${DSTS[@]}" ; do
 		dom0KeyFile="${dom0KeyFiles["$dst"]}"
