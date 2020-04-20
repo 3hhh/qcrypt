@@ -1003,7 +1003,10 @@ fi
 #@B_E
 function statusSingleC {
 #parse params
-local mountPoint="$(b_args_getOption "--mp")"
+local mountPoint=
+local mpSpecified=
+mountPoint="$(b_args_getOption "--mp")"
+mpSpecified=$?
 
 local sourceVM="$(b_args_get 1)"
 local sourceFile=
@@ -1151,7 +1154,7 @@ for dst in "${DSTS[@]}" ; do
 done
 
 #dev mounted on final VM?
-[ -n "$mountPoint" ] && [[ "$statMounted" != "yes" ]] && ((++ret))
+[ $mpSpecified -eq 0 ] && [[ "$statMounted" != "yes" ]] && ((++ret))
 printf "$statusFormat" "device mounted" "$statMounted"
 
 #make sure the target is not used by anything (otherwise it would be an invalid target)
