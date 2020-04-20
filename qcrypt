@@ -1151,7 +1151,7 @@ for dst in "${DSTS[@]}" ; do
 done
 
 #dev mounted on final VM?
-[[ "$statMounted" != "yes" ]] && ((++ret))
+[ -n "$mountPoint" ] && [[ "$statMounted" != "yes" ]] && ((++ret))
 printf "$statusFormat" "device mounted" "$statMounted"
 
 #make sure the target is not used by anything (otherwise it would be an invalid target)
