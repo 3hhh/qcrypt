@@ -120,7 +120,7 @@ function setup {
 	local mainCmd="sys-usb /mnt-ex01//containers/ex01-container.luks ex01-key d-testing work"
 	[[ "${CHAINS2INFO["${chain}_open"]}" == *"qcrypt  --inj d-testing /root/qcrypt-keys/ex01_disp --cy d-testing '--type plain --cipher aes-xts-plain64 -s 512 --hash sha512' --mp /qcrypt-ex01 open -- $mainCmd" ]]
 	echo b
-	[[ "${CHAINS2INFO["${chain}_status"]}" == *"qcrypt status -- $mainCmd" ]]
+	[[ "${CHAINS2INFO["${chain}_status"]}" == *"qcrypt status --mp \"\" -- $mainCmd" ]]
 	[[ "${CHAINS2INFO["${chain}_close"]}" == *"qcrypt close --force -- $mainCmd" ]]
 	echo c
 
@@ -149,7 +149,7 @@ function setup {
 	local mainCmd="another-usb /mnt-ex03//containers/ex03-container.luks ex03-key d-testing work work2"
 	[[ "${CHAINS2INFO["${chain}_open"]}" == *"qcrypt  --inj d-testing /root/qcrypt-keys/ex03_disp --cy d-testing '--type luks' --inj work /another/path.key --inj work2 /another/path2.key --cy work2 '--type luks' -a --ro --mp /qcrypt-ex03 open -- $mainCmd" ]]
 	echo e
-	[[ "${CHAINS2INFO["${chain}_status"]}" == *"qcrypt status -- $mainCmd" ]]
+	[[ "${CHAINS2INFO["${chain}_status"]}" == *"qcrypt status --mp \"\" -- $mainCmd" ]]
 	[[ "${CHAINS2INFO["${chain}_close"]}" == *"qcrypt close --force -- $mainCmd" ]]
 	echo f
 }

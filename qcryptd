@@ -349,12 +349,13 @@ done
 local cmd=
 [ ${CHAINS2INFO["${chainId}_autostart"]} -eq 0 ] && options="$options -a"
 [ ${CHAINS2INFO["${chainId}_read-only"]} -eq 0 ] && options="$options --ro"
-[ -n "${CHAINS2INFO["${chainId}_destination mount point"]}" ] && printf -v options '%s --mp %q' "$options" "${CHAINS2INFO["${chainId}_destination mount point"]}"
+local statusOptions=""
+[ -n "${CHAINS2INFO["${chainId}_destination mount point"]}" ] && printf -v options '%s --mp %q' "$options" "${CHAINS2INFO["${chainId}_destination mount point"]}" && printf -v statusOptions '%s --mp ""' "$statusOptions"
 printf -v cmd '%q %s open -- %s' "$QCRYPT" "$options" "$argChain"
 CHAINS2INFO["${chainId}_open"]="$cmd"
 
 #status command
-printf -v cmd '%q status -- %s' "$QCRYPT" "$argChain"
+printf -v cmd '%q status%s -- %s' "$QCRYPT" "$statusOptions" "$argChain"
 CHAINS2INFO["${chainId}_status"]="$cmd"
 
 #close command
