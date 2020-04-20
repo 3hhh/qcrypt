@@ -107,8 +107,8 @@ status
 	Invoking the status command without any other parameters will make $B_SCRIPT_NAME attempt to find all potential encryption chains.
 
 	Options:
-	--mp [path]	 Check whether the final device is mounted at the given [path]. If no [path] is specified, check whether it is mounted
-			 somewhere.
+	--mp [path]	 Check whether the final device is mounted at the given [path]. If an empty [path] is specified, check whether it is
+			 mounted somewhere. Without this parameter, the exit code does not include the mount status.
 
 luksInit
 	Create a new encrypted container in [source vm] as [source file] ([source file] must be a non-existing file path here) and pass the
