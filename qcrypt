@@ -153,18 +153,8 @@ exit 1
 #returns: Nothing, but errors out, if the dependencies are not met.
 #@B_E
 function checkDependencies {
-local deps="head
-cryptsetup
-qvm-prefs
-qvm-block
-qvm-check
-losetup
-df
-mktemp
-mkfs
-chmod
-readlink"
-b_checkDeps "$deps" || { B_ERR="Not all required dependencies to run $B_SCRIPT_NAME are installed." ; B_E }
+b_deps "head" "cryptsetup" "qvm-prefs" "qvm-block" "qvm-check" "losetup" \
+	"df" "mktemp" "mkfs" "chmod" "readlink"
 
 local vmDeps="cryptsetup
 losetup

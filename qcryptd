@@ -156,18 +156,6 @@ help
 exit 1
 }
 
-#checkDependencies
-#Checks whether the current bash environment suffices the dependency requirements to run this script.
-#returns: Nothing, but errors out, if the dependencies are not met.
-#@B_E
-function checkDependencies {
-local deps="sort
-date
-qvm-ls
-qvm-check"
-b_checkDeps "$deps" || { B_ERR="Not all required dependencies to run $B_SCRIPT_NAME are installed." ; B_E }
-}
-
 #parseIniKey [chain id] [key] [type] [required] [fallback]
 #Parse ini information to CHAINS2INFO.
 #[chain id]: Chain to do the parsing for.
@@ -1156,7 +1144,7 @@ fi
 return 0
 }
 
-checkDependencies
+b_deps "sort" "date" "qvm-ls" "qvm-check"
 b_args_parse "$@"
 if b_args_getOption "-v" > /dev/null ; then
 	DEBUG=0
