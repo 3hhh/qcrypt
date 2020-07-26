@@ -1024,7 +1024,7 @@ local ret=0
 local statusFormat="%20s:  %-10s\n"
 
 #source VM status
-#NOTE: we use qvm-check over b_dom0_isRunning as the first doesn't error out and is less expensive
+#NOTE: we use qvm-check over b_dom0_isRunning as the first doesn't error out and is less expensive (it accepts paused VMs though)
 echo " $sourceVM"
 if qvm-check --running "$sourceVM" &> /dev/null ; then
        	runningStat="yes"
