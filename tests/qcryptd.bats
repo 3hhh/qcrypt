@@ -328,7 +328,6 @@ local expected=""
 #[... chain state]: 0=never started, 1=started (source file missing), 2=started and stopped already, 3=never started, but force closed, 4=started, stopped and force closed
 #[nonexisting state]: 0=source not available, 1=source available, 3=after force close
 #[qcryptd status]: expected exit code of qcryptd status (default: 0)
-#[UTD_QUBES_TESTVM_UP]: whether the test VM was already started or not
 function checkTestChains {
 local chainDownState="$1"
 local chainMissingState="$2"
