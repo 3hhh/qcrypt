@@ -7,6 +7,7 @@
 
 QCRYPT="$(readlink -f "$BATS_TEST_DIRNAME/../qcrypt")"
 QCRYPTD="$(readlink -f "$BATS_TEST_DIRNAME/../qcryptd")"
+QCRYPTD_LOG="${QCRYPTD}.log"
 QCRYPTD_CONF_DIR="$(readlink -f "$BATS_TEST_DIRNAME/../conf")"
 
 #meant to be run inside setup()
@@ -209,4 +210,12 @@ function postCloseChecks {
 	eStatus=$(( $eStatus + $mod ))
 
 	assertQcryptStatus "$eStatus" "$mp" "$@"
+}
+
+#assertLogHas [list]
+#Check whether the log has any of the provided strings.
+#[list]: Newline-separated list of strings to check for.
+function assertLogHas {
+	local str="$1"
+	grep -Fq "$str" "$QCRYPTD_LOG"
 }

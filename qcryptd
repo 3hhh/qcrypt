@@ -2,8 +2,8 @@
 #
 #See usage().
 #
-#Copyright (C) 2019  David Hobach  GPLv3
-#version: 0.8
+#Copyright (C) 2020  David Hobach  GPLv3
+#version: 0.9
 #
 #This program is free software: you can redistribute it and/or modify
 #it under the terms of the GNU General Public License as published by
@@ -65,6 +65,9 @@ CONF_TARGET=
 #0 = the main loop should process events; everything else = it should exit
 PROCESS_EVENTS=0
 
+#qrexec timeout
+QREXEC_TIMEOUT="$(qubes-prefs "default_qrexec_timeout")" || { B_ERR="Failed to retrieve the default qrexec timeout." ; B_E }
+
 #internal configuration representation
 #array chains	 : all chains managed by qcryptd
 #map chains2info : chain ids --> all config input, chain start/stop command
@@ -80,15 +83,17 @@ declare -gA CHAINS2INFO=()
 declare -gA VMS2CHAINS=()
 
 #maps tracking currently active devices, VMs and chains
-#ACTIVE_VMS / V:	VM name   --> 0/1 (use isRunning [vm] to ontain the run state instead of this one)
+#ACTIVE_VMS / V:	VM name   --> 0/1/2 (2 = paused, use isRunning [vm] / isPaused [vm] to obtain the run state instead of this one)
 #ACTIVE_CHAINS / C:	chain id  --> 0/1 (use isActive [chain] to obtain the most recent state rather than this one)
 declare -gA ACTIVE_VMS=()
 declare -gA ACTIVE_CHAINS=()
 
 #helper maps for handleQubesEvent
 #LAST_ATTACHED: stores events and their times related to device attachments
+#LAST_START_ATTEMPT: vm --> last start attempt (not necessarily successful) timestamp in seconds since start
 #SUPPRESSION: used to suppress the same event occurring in a very short time
 declare -gA LAST_ATTACHED=()
+declare -gA LAST_START_ATTEMPT=()
 declare -gA SUPPRESSION=()
 
 function usage {
@@ -421,7 +426,7 @@ local chain=
 
 local badChains=""
 if [ $execute -eq 0 ] ; then
-	badChains="$(getBadChains "$(b_arr_toList "${CHAINS[@]}")")" || { B_ERR="Failed to obtain the list of chains which are in a bad state." ; B_E }
+	badChains="$(getBadChains "$(b_arr_toList "${CHAINS[@]}")" 2> /dev/null)" || { B_ERR="Failed to obtain the list of chains which are in a bad state." ; B_E }
 fi
 
 local prefix=""
@@ -515,12 +520,24 @@ else
 fi
 }
 
-#isRunning [vm]
+#isRunning [vm] [allow paused]
 #Check whether the given VM is running according to our internal state.
+#[allow paused]: If set to 0, also consider paused VMs to be running (default: 1).
 #returns: A zero exit code, if it is running and a nonzero exit code otherwise.
 function isRunning {
 local vm="$1"
-[ -n "${ACTIVE_VMS["$vm"]}" ] && [ ${ACTIVE_VMS["$vm"]} -eq 0 ]
+local allowPaused="${2:-1}"
+local ePaused=0
+[ $allowPaused -eq 0 ] && ePaused=2
+[[ -n "${ACTIVE_VMS["$vm"]}" && ( ${ACTIVE_VMS["$vm"]} -eq 0 || ${ACTIVE_VMS["$vm"]} -eq $ePaused ) ]]
+}
+
+#isPaused [vm]
+#Check whether the given VM is paused according to our internal state.
+#returns: A zero exit code, if it is running and a nonzero exit code otherwise.
+function isPaused {
+local vm="$1"
+[ -n "${ACTIVE_VMS["$vm"]}" ] && [ ${ACTIVE_VMS["$vm"]} -eq 2 ]
 }
 
 #chainVMsAreRunning [chain id]
@@ -732,7 +749,7 @@ if [ $forceFlag -ne 0 ] ; then
 	#Reason: The close would shut down the destination VM, but the user might still be working inside it.
 	#we double check with qvm-check as multiple VMs may have been shut down at the same time and we received only the first few events so far
 	local final="${CHAINS2INFO["${chain}_final destination vm"]}"
-	if isRunning "$final" && sleep 2 && qvm-check --running "$final" &> /dev/null ; then
+	if isRunning "$final" 0 && sleep 2 && qvm-check --running "$final" &> /dev/null ; then
 		logError "The qcrypt chain $chain is not working anymore and should be closed. However it seems that the $final VM is still running."$'\n'"Please shut it down manually to fix the issue. qcryptd should close the chain afterwards." 0
 		exit 3
 	fi
@@ -805,16 +822,37 @@ while IFS= read -r chain ; do
 
 	#the open operation might not have completed yet
 	local pid="${CHAINS2INFO["${chain}_last open pid"]}"
-	[ -n "$pid" ] && b_proc_childExists "$pid" && continue
+	if [ -n "$pid" ] ; then
+		if b_proc_childExists "$pid" ; then
+			[ $DEBUG -eq 0 ] && >&2 echo "$SECONDS $chain: Chain open still on-going @${pid}."
+			continue
+		else
+			CHAINS2INFO["${chain}_last open pid"]=""
+		fi
+	fi
+
+	#special case: skip the status check, if the final destination VM is paused
+	#reason: it'll fail, but in fact qcryptd should be alright once the user unpauses the VM --> unclear state --> do nothing now and check again on unpause
+	#for paused intermediate VMs we still error out as that may cause data loss otherwise
+	local final="${CHAINS2INFO["${chain}_final destination vm"]}"
+	if isPaused "$final" ; then
+		[ $DEBUG -eq 0 ] && >&2 echo "$SECONDS $chain: The final destination VM $final appears to be paused. Ignoring."
+		continue
+	fi
 
 	cmd="${CHAINS2INFO["${chain}_status"]}"
 	[ -z "$cmd" ] && B_ERR="Missing status command for chain $chain. Programming error?!" && B_E
+	[ $DEBUG -eq 0 ] && >&2 echo "$SECONDS $chain: Checking the status...."
 	eval "$cmd" &> /dev/null &
 	pids["$chain"]=$!
 done <<< "$list"
 
 for chain in "${!pids[@]}" ; do
-	! wait "${pids["$chain"]}" && echo "$chain"
+	if wait "${pids["$chain"]}" ; then
+		[ $DEBUG -eq 0 ] && >&2 echo "$SECONDS $chain: Good status."
+	else
+		echo "$chain"
+	fi
 done
 
 return 0
@@ -859,8 +897,18 @@ running="$(qvm-ls --running -O NAME --raw-list)" || { B_ERR="Faled to execute qv
 
 local vm=
 while IFS= read -r vm ; do
+	[ -z "$vm" ] && continue
 	ACTIVE_VMS["$vm"]=0
 done <<< "$running"
+
+local paused=
+paused="$(qvm-ls --paused -O NAME --raw-list)" || { B_ERR="Faled to execute qvm-ls." ; B_E }
+
+while IFS= read -r vm ; do
+	[ -z "$vm" ] && continue
+	ACTIVE_VMS["$vm"]=2
+done <<< "$paused"
+
 return 0
 }
 
@@ -902,6 +950,14 @@ echo ""
 
 #suppress all events from less than a few seconds ago (same name, same VM)
 [ -n "$last" ] && [ $(( $timestamp - $last )) -le 3 ]
+}
+
+#hasRecentStartAttempt [vm]
+#Check whether the given VM was seen with a recent start attempt.
+#returns: A zero exit code, if a recent start attempt was seen for the VM.
+function hasRecentStartAttempt {
+local vm="$1"
+[ -n "${LAST_START_ATTEMPT["$vm"]}" ] && [ $(( $SECONDS - ${LAST_START_ATTEMPT["$vm"]} )) -le $QREXEC_TIMEOUT ]
 }
 
 #onQubesEvent [subject] [event name] [event info] [timestamp]
@@ -965,9 +1021,15 @@ local timeSeconds="$4"
 
 #handle the current event
 case "$eventName" in
+	#VM start attempt
+	"domain-pre-start")
+		#update start attempt timestamp
+		LAST_START_ATTEMPT["$vm"]=$SECONDS
+		;;
 	#VM started
 	"domain-start")
 		ACTIVE_VMS["$vm"]=0
+		unset LAST_START_ATTEMPT["$vm"]
 
 		#react
 		#(no suppression needed, there's just one event)
@@ -985,6 +1047,29 @@ case "$eventName" in
 		#(no suppression needed, there's just one event)
 		echo "$SECONDS REACTION: VM stopped: $vm"
 		closeChainsByVM "$vm" 0
+		;;
+	#VM paused
+	"domain-paused")
+		ACTIVE_VMS["$vm"]=2
+
+		#react
+		#(no suppression needed, there's just one event)
+		echo "$SECONDS REACTION: VM paused: $vm"
+		closeChainsByVM "$vm" 1
+		;;
+	#VM started OR unpaused
+	"domain-unpaused")
+		#attempt to trigger on VM unpauses _not_ triggered by starts only
+		if ! hasRecentStartAttempt "$vm" ; then
+			ACTIVE_VMS["$vm"]=0
+
+			#react
+			#(no suppression needed, there's just one event)
+			echo "$SECONDS REACTION: VM unpaused: $vm"
+			openChainsByVM "$vm"
+			#special case: double check whether anything needs to be closed as something might have gone wrong during the pause (cf. special case @getBadChains())
+			closeChainsByVM "$vm" 1
+		fi
 		;;
 	#device attach or detach
 	#for USB devices the following appears to hold:
@@ -1144,7 +1229,7 @@ fi
 return 0
 }
 
-b_deps "sort" "date" "qvm-ls" "qvm-check"
+b_deps "sort" "date" "qvm-ls" "qvm-check" "qubes-prefs"
 b_args_parse "$@"
 if b_args_getOption "-v" > /dev/null ; then
 	DEBUG=0

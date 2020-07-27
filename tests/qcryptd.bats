@@ -2,8 +2,8 @@
 # 
 #+Bats tests for qcryptd. These tests assume that qcrypt is working correctly (qcrypt.bats ran successfully).
 #+
-#+Copyright (C) 2019  David Hobach  GPLv3
-#+0.5
+#+Copyright (C) 2020  David Hobach  GPLv3
+#+0.6
 
 load "test_common"
 
@@ -304,12 +304,13 @@ function prepareQcryptdStartTest {
 	[ -z "$output" ]
 }
 
-#assertOutput [output file] [state]
+#assertOutput [output file] [state] [prefix]
 #Check whether the given qcrypt pre/post open/close command output matches the expected one.
 #[state]: 0=not started, 1=started, 2=started and stopped already, 3=never started, but force closed, 4=started, stopped and force closed
 function assertOutput {
 local outFile="$1"
 local state="$2"
+local prefix="$3"
 
 local out="fail"
 out="$(cat "$outFile")"
@@ -320,10 +321,11 @@ local expected=""
 [ "$state" -ge 2 ] && expected="$expected"$'\n'"closing"$'\n'"closed"
 [ "$state" -eq 3 ] && expected="closing"$'\n'"closed"
 [ "$state" -ge 4 ] && expected="$expected"$'\n'"closing"$'\n'"closed"
+expected="${prefix}$expected"
 [[ "$out" == "$expected" ]]
 }
 
-#checkTestChains [destination VM down chain state] [source device missing chain state] [nonexisting state] [qcryptd status]
+#checkTestChains [destination VM down chain state] [source device missing chain state] [nonexisting state] [qcryptd status] [destination VM down output prefix] [source device missing prefix]
 #Check the status of the test chains to match the expected one.
 #[... chain state]: 0=never started, 1=started (source file missing), 2=started and stopped already, 3=never started, but force closed, 4=started, stopped and force closed
 #[nonexisting state]: 0=source not available, 1=source available, 3=after force close
@@ -333,6 +335,8 @@ local chainDownState="$1"
 local chainMissingState="$2"
 local nonexistingState="${3:-0}"
 local qcryptdStatus="${4:-0}"
+local chainDownPrefix="$5"
+local chainMissingPrefix="$6"
 
 #postCloseChecks [mount point] [source vm] [source device] [key id] [destination vm 1] .. [destination vm n]
 #make sure the service is running
@@ -360,7 +364,7 @@ else
 	postCloseChecks 0 "/mnt-dest-down" "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/container" "dest-down-key" "$UTD_QUBES_TESTVM"
 fi
 echo d
-assertOutput "$OUT_DEST_DOWN" "$chainDownState"
+assertOutput "$OUT_DEST_DOWN" "$chainDownState" "$chainDownPrefix"
 
 #device missing chain
 echo e
@@ -372,8 +376,22 @@ else
 	postCloseChecks $mod "/mnt-dev-missing" "${TEST_STATE["QCRYPT_VM_2"]}" "/srcmnt/test-folder/container" "dev-missing-key" "${TEST_STATE["QCRYPT_VM_1"]}"
 fi
 echo f
-assertOutput "$OUT_DEV_MISSING" "$chainMissingState"
+assertOutput "$OUT_DEV_MISSING" "$chainMissingState" "$chainMissingPrefix"
 echo g
+}
+
+#testPauseUnpause [vm] [sleep time]
+function testPauseUnpause {
+	local vm="$1"
+	local time="${2:-10}"
+
+	runSC qvm-pause "$vm"
+	[ $status -eq 0 ]
+	sleep $time
+
+	runSC qvm-unpause "$vm"
+	[ $status -eq 0 ]
+	sleep 5
 }
 
 @test "start & stop (valid)" {
@@ -451,13 +469,39 @@ echo g
 	sleep 20
 	checkTestChains 2 1 1
 
+	#get the missing destination VM chain back up
+	runSL b_dom0_ensureRunning "$UTD_QUBES_TESTVM"
+	[ $status -eq 0 ]
+	[ -z "$output" ]
+	runSL b_dom0_copy "$(getFixturePath "1layer01/container")" "$UTD_QUBES_TESTVM" "/tmp/" 0
+	[ $status -eq 0 ]
+	[ -z "$output" ]
+	sleep 7
+	local prefix="starting"$'\n'"started"$'\n'"closing"$'\n'"closed"$'\n'
+	checkTestChains 1 1 1 0 "$prefix"
+
+	#pausing the destination VM shouldn't be a problem
+	testPauseUnpause "$UTD_QUBES_TESTVM"
+	checkTestChains 1 1 1 0 "$prefix"
+
+	#pausing the source or intermediary VMs must generate a big red error
+	#we have to wait longer than the qrexec timeout for that though (until then the status command will try to obtain a result)
+	local qtimeout="$(qubes-prefs default_qrexec_timeout)"
+	testPauseUnpause "${TEST_STATE["QCRYPT_VM_1"]}" $(( $qtimeout +5 ))
+	assertLogHas "ERROR: The qcrypt chain dest-down is not working anymore and should be closed. However it seems that the $UTD_QUBES_TESTVM VM is still running."
+
+	#shut down the VM causing issues
+	qvm-shutdown --wait "$UTD_QUBES_TESTVM"
+	sleep 5
+	checkTestChains 2 1 1 0 "$prefix"
+
 	#stop with close all flag
 	runSL "$QCRYPTD" -c stop
 	[ $status -eq 0 ]
 	[ -n "$output" ]
 	[[ "$output" != *"ERROR"* ]]
 	sleep 5
-	checkTestChains 4 2 3 1
+	checkTestChains 4 2 3 1 "$prefix"
 
 	#cleanup
 	rm -f "$targetFolder"/*.ini
