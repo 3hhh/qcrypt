@@ -420,6 +420,8 @@ function testPauseUnpause {
 	sleep 5
 	checkTestChains 0 0 0
 
+	[ -f "$QCRYPTD_LOG" ]
+
 	#autostart = false should be working
 	runSL b_dom0_isRunning "$UTD_QUBES_TESTVM"
 	[ $status -ne 0 ]
@@ -462,6 +464,12 @@ function testPauseUnpause {
 	sleep 2
 	checkTestChains 2 1 1 1
 
+	#while the service is stopped, re-write its log for later (avoid multiple writes at the same time)
+	local err="ERROR: The qcrypt chain dest-down is not working anymore and should be closed. However it seems that the $UTD_QUBES_TESTVM VM is still running."
+	[ -f "$QCRYPTD_LOG" ]
+	run sed -i "s/$err/${err/closed. However/closed.  However}/g" "$QCRYPTD_LOG" #make sure old log entries cannot be found below
+
+	#re-start the service
 	runSL "$QCRYPTD" -v start "$target"
 	[ $status -eq 0 ]
 	[ -n "$output" ]
@@ -483,12 +491,14 @@ function testPauseUnpause {
 	#pausing the destination VM shouldn't be a problem
 	testPauseUnpause "$UTD_QUBES_TESTVM"
 	checkTestChains 1 1 1 0 "$prefix"
+	runSC assertLogHas "$err"
+	[ $status -ne 0 ]
 
 	#pausing the source or intermediary VMs must generate a big red error
 	#we have to wait longer than the qrexec timeout for that though (until then the status command will try to obtain a result)
 	local qtimeout="$(qubes-prefs default_qrexec_timeout)"
 	testPauseUnpause "${TEST_STATE["QCRYPT_VM_1"]}" $(( $qtimeout +5 ))
-	assertLogHas "ERROR: The qcrypt chain dest-down is not working anymore and should be closed. However it seems that the $UTD_QUBES_TESTVM VM is still running."
+	assertLogHas "$err"
 
 	#shut down the VM causing issues
 	qvm-shutdown --wait "$UTD_QUBES_TESTVM"
