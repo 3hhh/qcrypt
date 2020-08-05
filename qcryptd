@@ -29,7 +29,6 @@ b_import "daemon"
 b_import "proc"
 b_import "ini"
 b_import "fs"
-b_import "delay"
 b_import "multithreading/mtx"
 b_import "os/qubes4/dom0"
 
@@ -90,10 +89,11 @@ declare -gA ACTIVE_CHAINS=()
 
 #helper maps for handleQubesEvent
 #LAST_ATTACHED: stores events and their times related to device attachments
-#LAST_START_ATTEMPT: vm --> last start attempt (not necessarily successful) timestamp in seconds since start
+#LAST_START_ATTEMPT/LAST_SHUTDOWN_ATTEMPT: vm --> last start/shutdown attempt (not necessarily successful) timestamp in seconds since daemon start
 #SUPPRESSION: used to suppress the same event occurring in a very short time
 declare -gA LAST_ATTACHED=()
 declare -gA LAST_START_ATTEMPT=()
+declare -gA LAST_SHUTDOWN_ATTEMPT=()
 declare -gA SUPPRESSION=()
 
 function usage {
@@ -499,7 +499,7 @@ logInfo "$(declare -p SUPPRESSION)"
 [ $DEBUG -eq 0 ] && echo "STATE END"$'\n'
 }
 
-#loggingErrorHandler [error out]
+#loggingDaemonErrorHandler [error out]
 function loggingDaemonErrorHandler {
 local errorOut=${1:-0}
 
@@ -676,7 +676,7 @@ return 0
 }
 
 #openChains [wait flag] [chain id 1] ... [chain id n]
-#[wait flag]: If set to 0, wait for on-going chain status changes possibly affecting our decision to close a chain.
+#[wait flag]: If set to 0, wait for on-going chain status changes possibly affecting our decision to open a chain.
 #Check whether it makes sense to open the given chains and if so, attempt it.
 #returns: Nothing. Errors are logged.
 function openChains {
@@ -692,6 +692,10 @@ for chain in "$@" ; do
 	if [ ${CHAINS2INFO["${chain}_autostart"]} -ne 0 ] ; then
 		chainVMsAreRunning "$chain" || continue
 	fi
+
+	#do not attempt to open chains with on-going close operation
+	local last="${CHAINS2INFO["${chain}_last close"]}"
+	[ -n "$last" ] && continue
 
 	#do not open too often to prevent continuous re-open attempts in case of errors
 	local last="${CHAINS2INFO["${chain}_last open"]}"
@@ -747,12 +751,15 @@ local forceFlag="${2:-1}"
 if [ $forceFlag -ne 0 ] ; then
 	#only close chains whose final destination VM is down & warn the user about others
 	#Reason: The close would shut down the destination VM, but the user might still be working inside it.
-	#we double check with qvm-check as multiple VMs may have been shut down at the same time and we received only the first few events so far
+	#we double check with hasRecentShutdownAttempt() & b_dom0_isRunning() as multiple VMs may have been shut down at the same time and we received only the first few events so far
+	#(in particular VMs shut down from inside the VM / not via qvm-shutdown appear to require the b_dom0_isRunning check)
 	local final="${CHAINS2INFO["${chain}_final destination vm"]}"
-	if isRunning "$final" 0 && sleep 2 && qvm-check --running "$final" &> /dev/null ; then
+	b_setBE 1
+	if isRunning "$final" 0 && ! hasRecentShutdownAttempt "$final" && sleep 2 && b_dom0_isRunning "$final" &> /dev/null ; then
 		logError "The qcrypt chain $chain is not working anymore and should be closed. However it seems that the $final VM is still running."$'\n'"Please shut it down manually to fix the issue. qcryptd should close the chain afterwards." 0
 		exit 3
 	fi
+	b_resetErrorHandler
 fi
 
 #make sure previous operations are completed
@@ -824,32 +831,23 @@ while IFS= read -r chain ; do
 	local pid="${CHAINS2INFO["${chain}_last open pid"]}"
 	if [ -n "$pid" ] ; then
 		if b_proc_childExists "$pid" ; then
-			[ $DEBUG -eq 0 ] && >&2 echo "$SECONDS $chain: Chain open still on-going @${pid}."
+			[ $DEBUG -eq 0 ] && logInfo "$chain: Chain open still on-going @${pid}."
 			continue
 		else
 			CHAINS2INFO["${chain}_last open pid"]=""
 		fi
 	fi
 
-	#special case: skip the status check, if the final destination VM is paused
-	#reason: it'll fail, but in fact qcryptd should be alright once the user unpauses the VM --> unclear state --> do nothing now and check again on unpause
-	#for paused intermediate VMs we still error out as that may cause data loss otherwise
-	local final="${CHAINS2INFO["${chain}_final destination vm"]}"
-	if isPaused "$final" ; then
-		[ $DEBUG -eq 0 ] && >&2 echo "$SECONDS $chain: The final destination VM $final appears to be paused. Ignoring."
-		continue
-	fi
-
 	cmd="${CHAINS2INFO["${chain}_status"]}"
 	[ -z "$cmd" ] && B_ERR="Missing status command for chain $chain. Programming error?!" && B_E
-	[ $DEBUG -eq 0 ] && >&2 echo "$SECONDS $chain: Checking the status...."
+	[ $DEBUG -eq 0 ] && logInfo "$chain: Checking the status...."
 	eval "$cmd" &> /dev/null &
 	pids["$chain"]=$!
 done <<< "$list"
 
 for chain in "${!pids[@]}" ; do
 	if wait "${pids["$chain"]}" ; then
-		[ $DEBUG -eq 0 ] && >&2 echo "$SECONDS $chain: Good status."
+		[ $DEBUG -eq 0 ] && logInfo "$chain: Good status."
 	else
 		echo "$chain"
 	fi
@@ -858,21 +856,51 @@ done
 return 0
 }
 
-#closeChainsByVM [v] [shutdown flag]
+#filterChainsWithPausedDest [list]
+#[list]: List of chains.
+#returns: The input list; those chains with a paused destination VM were removed.
+function filterChainsWithPausedDest {
+local list="$1"
+
+local chain=
+while IFS= read -r chain ; do
+	local final="${CHAINS2INFO["${chain}_final destination vm"]}"
+	if isPaused "$final" ; then
+		[ $DEBUG -eq 0 ] && logInfo "$chain: The final destination VM $final appears to be paused. Ignoring."
+	else
+		echo "$chain"
+	fi
+done <<< "$list"
+
+return 0
+}
+
+#closeChainsByVM [v] [shutdown flag] [paused flag]
 #Close all chains related to the given VM.
 #An implementation of closeChainsByVM(v,VM shutdown=0|1).
 #[v]: A VM name.
-#[shutdown flag]: If the VM [v] was shut down and the chain requires closing for that reason (0) or the chains are expected to have other issues (e.g. device detached) (1).
+#[shutdown flag]: If the VM [v] was shut down and the chain requires closing for that reason (0) or the chains are expected to have other issues (e.g. device detached) (default: 1).
+#[paused flag]: If the VM [v] was paused and the chain requires closing for that reason (0) or the chains are expected to have other issues (e.g. device detached) (default: 1).
 #returns: Nothing. Close errors will be logged.
 function closeChainsByVM {
 local vm="$1"
-local shutdown="$2"
+local shutdown="${2:-1}"
+local paused="${3:-1}"
 
 #get the applicable chains
-local chains="${VMS2CHAINS["$vm"]}"
-[ $shutdown -ne 0 ] && chains="$(getBadChains "$chains")"
+local chains=
+if [ $shutdown -eq 0 ] ; then
+	chains="${VMS2CHAINS["$vm"]}"
+elif [ $paused -eq 0 ] ; then
+	#special case: do not consider the chain broken, if the final destination VM is paused
+	#reason: it'll fail, but in fact qcryptd should be alright once the user unpauses the VM --> unclear state --> do nothing now and check again on unpause
+	#for paused intermediate VMs we still error out as that may cause data loss otherwise
+	chains="$(filterChainsWithPausedDest "${VMS2CHAINS["$vm"]}")"
+else
+	chains="$(getBadChains "${VMS2CHAINS["$vm"]}")"
+fi
 
-[ $DEBUG -eq 0 ] && echo $'\n'"$SECONDS Chains about to be closed (if active):"$'\n'"$chains"$'\n'
+[ $DEBUG -eq 0 ] && logInfo "Chains about to be closed (if active):"$'\n'"$chains"$'\n'
 
 local chain=
 local toClose=()
@@ -960,6 +988,14 @@ local vm="$1"
 [ -n "${LAST_START_ATTEMPT["$vm"]}" ] && [ $(( $SECONDS - ${LAST_START_ATTEMPT["$vm"]} )) -le $QREXEC_TIMEOUT ]
 }
 
+#hasRecentShutdownAttempt [vm]
+#Check whether the given VM was seen with a recent shutdown attempt.
+#returns: A zero exit code, if a recent shutdown attempt was seen for the VM.
+function hasRecentShutdownAttempt {
+local vm="$1"
+[ -n "${LAST_SHUTDOWN_ATTEMPT["$vm"]}" ] && [ $(( $SECONDS - ${LAST_SHUTDOWN_ATTEMPT["$vm"]} )) -le $QREXEC_TIMEOUT ]
+}
+
 #onQubesEvent [subject] [event name] [event info] [timestamp]
 #Called for every Qubes OS event.
 #[subject]: The subject name Qubes OS provides. Usually the VM for which the event was reported. 'None' appears to mean 'dom0'.
@@ -975,7 +1011,7 @@ local timeSeconds="${4:0:10}"
 
 [ $PROCESS_EVENTS -ne 0 ] && return $PROCESS_EVENTS
 
-#NOTE: We only do some pre-filtering and delaying here and leave the handling to [handleQubesEvent](#handleQubesEvent).
+#NOTE: We only do some pre-filtering and (possibly) delaying here and leave the handling to [handleQubesEvent](#handleQubesEvent).
 
 #init if necessary
 #NOTE: some things require initialization _in_ the event loop as we might otherwise lose events in the meantime
@@ -990,24 +1026,7 @@ if [ $DAEMON_INIT_DONE -ne 0 ] ; then
 	DAEMON_INIT_DONE=0
 fi
 
-case "$eventName" in
-	#device attach or detach
-	"device-list-change:block")
-		needsSuppression "$vm" "$eventName" "$timeSeconds" && return 0
-
-		#NOTE: we delay those events by 1-2s as they tend to occur together with VM shutdown events, but usually _before_ these; however since the VM shutdown is more relevant for us, we want to know about it first
-		local cmd=
-		printf -v cmd 'handleQubesEvent %q %q %q %q' "$vm" "$eventName" "$eventInfo" "$timeSeconds"
-		b_delay_to $(( $timeSeconds +2 )) "$cmd"
-		;;
-	#heartbeat event
-	"heartbeat")
-		b_delay_execute "$timeSeconds" || return $?
-		;;
-	*)
-		handleQubesEvent "$vm" "$eventName" "$eventInfo" "$timeSeconds" || return $?
-esac
-
+handleQubesEvent "$vm" "$eventName" "$eventInfo" "$timeSeconds" || return $?
 return 0
 }
 
@@ -1033,19 +1052,30 @@ case "$eventName" in
 
 		#react
 		#(no suppression needed, there's just one event)
-		echo "$SECONDS REACTION: VM started: $vm"
+		logInfo "REACTION: VM started: $vm"
 		openChainsByVM "$vm"
 		;;
-	#VM stopped
+	#VM shutdown attempt (not triggered on kill & not on shutdown from internal)
+	"domain-pre-shutdown")
+		#update shutdown attempt timestamp
+		LAST_SHUTDOWN_ATTEMPT["$vm"]=$SECONDS
+		;;
+	#VM forced shutdown (on kill or on shutdown from internal), at least somewhat before "domain-shutdown"
+	"domain-stopped")
+		#update shutdown attempt timestamp
+		LAST_SHUTDOWN_ATTEMPT["$vm"]=$SECONDS
+		;;
+	#VM stopped (triggered on shutdown & kill)
 	"domain-shutdown")
 		ACTIVE_VMS["$vm"]=1
+		unset LAST_SHUTDOWN_ATTEMPT["$vm"]
 
 		#some state cleanup
 		unset SUPPRESSION["${vm}_device-list-change:block"]
 
 		#react
 		#(no suppression needed, there's just one event)
-		echo "$SECONDS REACTION: VM stopped: $vm"
+		logInfo "REACTION: VM stopped: $vm"
 		closeChainsByVM "$vm" 0
 		;;
 	#VM paused
@@ -1054,8 +1084,8 @@ case "$eventName" in
 
 		#react
 		#(no suppression needed, there's just one event)
-		echo "$SECONDS REACTION: VM paused: $vm"
-		closeChainsByVM "$vm" 1
+		logInfo "REACTION: VM paused: $vm"
+		closeChainsByVM "$vm" 1 0
 		;;
 	#VM started OR unpaused
 	"domain-unpaused")
@@ -1065,10 +1095,10 @@ case "$eventName" in
 
 			#react
 			#(no suppression needed, there's just one event)
-			echo "$SECONDS REACTION: VM unpaused: $vm"
+			logInfo "REACTION: VM unpaused: $vm"
 			openChainsByVM "$vm"
 			#special case: double check whether anything needs to be closed as something might have gone wrong during the pause (cf. special case @getBadChains())
-			closeChainsByVM "$vm" 1
+			closeChainsByVM "$vm"
 		fi
 		;;
 	#device attach or detach
@@ -1079,12 +1109,14 @@ case "$eventName" in
 	# --> we just try to open and close all chains related to that VM (may be expensive)
 	#     if Qubes OS ever gets some more details into its events, we could change that
 	"device-list-change:block")
+		needsSuppression "$vm" "$eventName" "$timeSeconds" && return 0
+
 		#sometimes also triggered on shutdown
 		if isRunning "$vm" ; then
 			#react
-			echo "$SECONDS REACTION: Device attached or detached: $vm"
+			logInfo "REACTION: Device attached or detached: $vm"
 			openChainsByVM "$vm" 1
-			closeChainsByVM "$vm" 1
+			closeChainsByVM "$vm"
 		fi
 		;;
 	*)
@@ -1229,7 +1261,7 @@ fi
 return 0
 }
 
-b_deps "sort" "date" "qvm-ls" "qvm-check" "qubes-prefs"
+b_deps "sort" "date" "qvm-ls" "qubes-prefs" "logger" "notify-send"
 b_args_parse "$@"
 if b_args_getOption "-v" > /dev/null ; then
 	DEBUG=0
