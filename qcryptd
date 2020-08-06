@@ -449,8 +449,8 @@ exit $ret
 #@B_E
 function stopC {
 #parse params
-local termSignal=10
-b_args_getOption "-c" > /dev/null && termSignal=12
+local termSignal="SIGUSR1"
+b_args_getOption "-c" > /dev/null && termSignal="SIGUSR2"
 
 b_daemon_stop "$DID" "$termSignal" 0
 }
@@ -926,6 +926,7 @@ running="$(qvm-ls --running -O NAME --raw-list)" || { B_ERR="Faled to execute qv
 local vm=
 while IFS= read -r vm ; do
 	[ -z "$vm" ] && continue
+	[[ "$vm" == "dom0" ]] && continue
 	ACTIVE_VMS["$vm"]=0
 done <<< "$running"
 
@@ -934,6 +935,7 @@ paused="$(qvm-ls --paused -O NAME --raw-list)" || { B_ERR="Faled to execute qvm-
 
 while IFS= read -r vm ; do
 	[ -z "$vm" ] && continue
+	[[ "$vm" == "dom0" ]] && continue
 	ACTIVE_VMS["$vm"]=2
 done <<< "$paused"
 
