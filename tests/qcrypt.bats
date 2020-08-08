@@ -313,10 +313,27 @@ function runForceClose {
 		runSL b_dom0_isHalted "$vm"
 		[ $status -eq 0 ]
 		[ -z "$output" ]
-		[[ "$vm" == "$UTD_QUBES_TESTVM" ]] && b_dom0_ensureRunning "$UTD_QUBES_TESTVM"
+		if [[ "$vm" == "$UTD_QUBES_TESTVM" ]] ; then
+			runSL  b_dom0_ensureRunning "$UTD_QUBES_TESTVM"
+			echo "$output"
+			[ $status -eq 0 ]
+			[ -z "$output" ]
+		fi
 	done
 
 	recreateTestVMsIfNeeded
+}
+
+
+function singleLayerOpen {
+	local eOut="$1"
+
+	runSL "$QCRYPT" --cy "${TEST_STATE["QCRYPT_VM_2"]}" '--type luks' open --inj "${TEST_STATE["QCRYPT_VM_2"]}" "$fixturePath/keys/target" --mp "/mnt" -- "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/1layer01" "1layer01" "${TEST_STATE["QCRYPT_VM_2"]}"
+	echo "$output"
+	[ $status -eq 0 ]
+	[[ "$output" == *"$eOut"* ]]
+	[[ "$output" != *"ERROR"* ]]
+	postOpenChecks 1 0 "/mnt" "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/1layer01" "1layer01" "${TEST_STATE["QCRYPT_VM_2"]}"
 }
 
 @test "open (have another coffee...)" {
@@ -352,13 +369,11 @@ function runForceClose {
 	[[ "$output" == *"ERROR"* ]]
 
 	#correct open with a single layer
-	runSL "$QCRYPT" --cy "${TEST_STATE["QCRYPT_VM_2"]}" '--type luks' open --inj "${TEST_STATE["QCRYPT_VM_2"]}" "$fixturePath/keys/target" --mp "/mnt" -- "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/1layer01" "1layer01" "${TEST_STATE["QCRYPT_VM_2"]}"
-	echo "$output"
-	[ $status -eq 0 ]
-	[[ "$output" == *"Open done."* ]]
-	[[ "$output" != *"ERROR"* ]]
-	postOpenChecks 1 0 "/mnt" "${TEST_STATE["QCRYPT_VM_1"]}" "/tmp/1layer01" "1layer01" "${TEST_STATE["QCRYPT_VM_2"]}"
-	
+	singleLayerOpen "Open done."
+
+	#doing the same again shouldn't change anything
+	singleLayerOpen "The chain is already open."
+
 	#correct open with two layers, r/o and call syntax as in help
 	copyFixture "2layer01" "${TEST_STATE["QCRYPT_VM_1"]}"
 	local fixturePath="$(getFixturePath "2layer01")"

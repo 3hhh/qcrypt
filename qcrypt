@@ -423,7 +423,15 @@ eval "$coptStr" || { B_ERR="Programming error?!" ; B_E }
 
 #make sure that the open doesn't f*ck things up
 b_info "Checking whether the chain is fully closed..."
+b_setErrorHandler 'b_defaultErrorHandler 1 1 1'
 ensureClosed "$sourceVM" "$sourceFile" "$keyId" "${DSTS[@]}"
+b_resetErrorHandler 1
+if [[ "$B_ERR" == "The chain is already open." ]] ; then
+	b_info "$B_ERR Nothing to do."
+	B_ERR=""
+	return 0
+fi
+B_E
 
 #start all necessary VMs or check that they are running
 if [ $autostart -eq 0 ] ; then

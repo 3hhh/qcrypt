@@ -48,6 +48,7 @@ function recreateTestVMsIfNeeded {
 		TEST_STATE["QCRYPT_VM_2"]="$(b_dom0_startDispVM "$UTD_QUBES_DISPVM_TEMPLATE")"
 		saveBlibTestState
 	fi
+	return 0
 }
 
 function skipIfNotRealRoot {
