@@ -696,7 +696,7 @@ for chain in "$@" ; do
 	fi
 
 	#do not attempt to open chains with on-going close operation
-	local last="${CHAINS2INFO["${chain}_last close"]}"
+	local last="${CHAINS2INFO["${chain}_last close pid"]}"
 	[ -n "$last" ] && continue
 
 	#do not open too often to prevent continuous re-open attempts in case of errors
