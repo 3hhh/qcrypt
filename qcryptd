@@ -667,7 +667,18 @@ fi
 cmd="${CHAINS2INFO["${chain}_open"]}"
 [ -z "$cmd" ] && B_ERR="Missing open command for chain $chain. Programming error?!" && B_E
 local notifySummary="$B_SCRIPT_NAME status: $chain"
-eval "$cmd" || { logError "Failed to open the chain $chain." 0 "$notifySummary" ; B_ERR="Failed to open the chain $chain. Check ${CHAINS2INFO["${chain}_status"]} for details." ; B_E }
+if ! eval "$cmd" ; then
+	local msg="Failed to open the chain $chain. Closing again..."
+	logError "$msg" 0 "$notifySummary"
+
+	#NOTES:
+	# - failed open operations often result in partially open chains --> thus we attempt to close
+	# - we don't need to use mutexes etc. as we still have the open mutex
+	closeSingleChainNaively "$chain"
+
+	B_ERR="$msg"
+	B_E
+fi
 
 #execute the post open command
 cmd="${CHAINS2INFO["${chain}_post open command"]}"
@@ -742,6 +753,18 @@ done <<< "$chains"
 openChains 1 "${toOpen[@]}"
 }
 
+#closeSingleChainNaively [chain]
+#Close a single chain in the foreground naively (no checks, mutex obtaining, ... whatsoever). Helper function only. Usually [closeChains](#closeChains) should be used.
+#returns: An exit code of 0, if and only if the chain was successfully closed.
+#@B_E
+function closeSingleChainNaively {
+local chain="$1"
+local cmd="${CHAINS2INFO["${chain}_close"]}"
+[ -z "$cmd" ] && B_ERR="Missing close command for chain $chain. Programming error?!" && B_E
+eval "$cmd" || logError "Failed to correctly close the chain $chain. Assuming it closed anyway and proceeding..."
+return 0
+}
+
 #closeSingleChain [chain id] [force flag]
 #Close a single chain in the foreground. Helper function for [closeChains](#closeChains), which must be used over this one.
 #returns: An exit code of 0, if and only if the chain was successfully closed.
@@ -774,9 +797,7 @@ local cmd="${CHAINS2INFO["${chain}_pre close command"]}"
 [ -n "$cmd" ] && eval "$cmd"
 
 #close the chain
-cmd="${CHAINS2INFO["${chain}_close"]}"
-[ -z "$cmd" ] && B_ERR="Missing close command for chain $chain. Programming error?!" && B_E
-eval "$cmd" || logError "Failed to correctly close the chain $chain. Assuming it closed anyway and proceeding..."
+closeSingleChainNaively "$chain"
 
 #execute the post close command
 cmd="${CHAINS2INFO["${chain}_post close command"]}"
