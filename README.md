@@ -18,6 +18,12 @@ qcryptd is a daemon to automate `qcrypt` for everyday usage.
 
 It can detect device attachments and VMs being started and instantly attaches the configured qcrypt storage to the VM which was just started. This way it brings back the "plug & play feeling" for external storage that users are accustomed to from other operating systems.
 
+# Example use cases
+
+- slice a large cloud storage pool or USB pen drive into dedicated per-VM storage volumes
+- confidentially share data across multiple Qubes OS machines
+- bind persistent trusted storage to a disposable VM directory ("limited persistence")
+
 ## Table of contents
 
 - [Installation](#installation)
@@ -116,7 +122,7 @@ destination mount point=/mnt
 read-only=false
 ```
 
-One could put that configuration e.g. inside the directory `/etc/qcryptd/example/med-work.ini` and could then start qcryptd with `qcryptd start example`.
+One could put that configuration e.g. inside the directory `/etc/qcryptd/example/med-work.ini` and could then start qcryptd with `qcryptd start example`, which will execute _all_ chain configurations found inside the `/etc/qcryptd/example/` directory.
 
 Please keep in mind that the `mediator-vm` may be started or stopped by qcryptd at will. So it is highly recommended to use it only for the purpose of that single chain!
 
@@ -136,7 +142,7 @@ Also make sure _not_ to put key file backups inside a qcrypt container...
 
 ## Copyright
 
-© 2019 David Hobach
+© 2020 David Hobach
 GPLv3
 
 See `LICENSE` for details.
