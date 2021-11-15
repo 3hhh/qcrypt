@@ -2,13 +2,13 @@
 # 
 #+Bats tests for qcrypt.
 #+
-#+Copyright (C) 2020  David Hobach  GPLv3
+#+Copyright (C) 2021  David Hobach  GPLv3
 #+0.7
 
 load "test_common"
 
 #size of the containers to test luksInit with in MB
-QCRYPT_CSIZE="5"
+QCRYPT_CSIZE="34" #luks1 requires > 2MB, luks2 > 16 MB (they reserve that much metadata) _per_ layer (i.e. 2x for our tests)
 QCRYPT_CSIZE_BYTES="$(( $QCRYPT_CSIZE * 1024 * 1024 ))"
 
 function setup {
@@ -248,7 +248,7 @@ function postInitChecks {
 	#luksInit with a key store
 	rm -f "$bak"/*
 	store="$(mktemp -d)"
-	local pass="passw0rd!"
+	local pass="$TEST_PASSWORD"
 	local kid="my-testkey-id"
 	#NOTE: we pass the password twice: one for creation, one for opening
 	echo "$pass"$'\n'"$pass" | {
