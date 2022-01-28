@@ -180,7 +180,7 @@ function postOpenChecks {
 	if [ -n "$mp" ] && [ $ro -eq 0 ] ; then
 		runSL b_dom0_execFuncIn "$target" "" "readOnlyTest" - - "$mp"
 		[ $status -eq 0 ]
-		[ -n "$output" ]
+		[ -z "$output" ]
 	fi
 
 	return 0
