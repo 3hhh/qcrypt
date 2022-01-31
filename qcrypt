@@ -38,6 +38,9 @@ QCRYPT_UI_MODE="${QCRYPT_UI_MODE:-auto}"
 #distinguish the B_E exit code from the "normal" error
 B_RC=6
 
+#default options for b_dom0_qvmRun & b_dom0_exec*
+B_DOM0_QVM_RUN_PARAMS=("--no-gui")
+
 QCRYPT_FOLDER="~/.qcrypt"
 QCRYPT_KEYS="$QCRYPT_FOLDER/keys"
 

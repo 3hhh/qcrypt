@@ -43,6 +43,9 @@ QCRYPTD_CONF_2="$B_SCRIPT_DIR/conf"
 #distinguish the B_E exit code from the "normal" error
 B_RC=6
 
+#default options for b_dom0_qvmRun & b_dom0_exec*
+B_DOM0_QVM_RUN_PARAMS=("--no-gui")
+
 #daemon ID to uniquely identify the background process
 DID="$B_SCRIPT_NAME"
 
