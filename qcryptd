@@ -41,9 +41,11 @@ QCRYPTD_CONF="/etc/$B_SCRIPT_NAME"
 QCRYPTD_CONF_2="$B_SCRIPT_DIR/conf"
 
 #distinguish the B_E exit code from the "normal" error
+#shellcheck disable=SC2034
 B_RC=6
 
 #default options for b_dom0_qvmRun & b_dom0_exec*
+#shellcheck disable=SC2034
 B_DOM0_QVM_RUN_PARAMS=("--no-gui")
 
 #daemon ID to uniquely identify the background process
@@ -256,13 +258,12 @@ parseIniKey "$chainId" "source mount point" 1 1 || ((errCnt+=1))
 parseIniKey "$chainId" "source file" 1 0 || ((errCnt+=1))
 parseIniKey "$chainId" "key" 1 0 || ((errCnt+=1))
 local i=
-local out=""
 for ((i=1;;i++)) ; do
 	if [ $i -eq 1 ] ; then
 		parseIniKey "$chainId" "destination vm $i" 1 0 || ((errCnt+=1))
 	else
 		#probe first, then parse
-		out="$(parseIniKey "$chainId" "destination vm $i" 1 0)" || break
+		(parseIniKey "$chainId" "destination vm $i" 1 0 &> /dev/null) || break
 		parseIniKey "$chainId" "destination vm $i" 1 0
 	fi
 	parseIniKey "$chainId" "destination inj $i" 1 1 || ((errCnt+=1))
@@ -368,7 +369,7 @@ function getConfigFolder {
 local target="${1:-default}"
 local targetFolder="$QCRYPTD_CONF/$target"
 [ -d "$targetFolder" ] && { echo "$targetFolder" ; return 0 ; } || targetFolder="$QCRYPTD_CONF_2/$target"
-[ -d "$targetFolder" ] && { echo "$targetFolder" ; return 0 ; } || { B_ERR="No configuration for the target $target found in either $QCRYPT_CONF or $QCRYPTD_CONF_2." ; B_E ; }
+[ -d "$targetFolder" ] && { echo "$targetFolder" ; return 0 ; } || { B_ERR="No configuration for the target $target found in either $QCRYPTD_CONF or $QCRYPTD_CONF_2." ; B_E ; }
 }
 
 #parseConfigFiles [target]
@@ -588,7 +589,6 @@ fi
 
 #mount source device, if necessary
 #NOTE: _not_ thread safe (e.g. b_dom0_mountIfNecessary for the same source VM & device)!
-local out=""
 if [ -n "$srcDev" ] && [ -n "$srcMp" ] && [[ "$srcMp" != "/" ]] ; then
 	b_setBE 1
 	#NOTE: for security reasons we enforce our mount point (we don't want to read the untrusted VM output and pass it to our internal state)
@@ -659,6 +659,7 @@ local chain="$1"
 #make sure previous operations are completed
 local release=
 release="$(b_mtx_waitFor "${CHAINS2INFO["${chain}_mutex"]}" "$BASHPID")" || { B_ERR="Failed to obtain a mutex." ; B_E ; }
+#shellcheck disable=SC2064
 trap "$release" EXIT RETURN
 
 #execute the pre open command
@@ -794,6 +795,7 @@ fi
 #make sure previous operations are completed
 local release=
 release="$(b_mtx_waitFor "${CHAINS2INFO["${chain}_mutex"]}" "$BASHPID")" || { B_ERR="Failed to obtain a mutex." ; B_E ; }
+#shellcheck disable=SC2064
 trap "$release" EXIT RETURN
 
 #execute the pre close command
@@ -848,7 +850,6 @@ local chain=
 local cmd=
 #chain id --> pid
 declare -A pids=()
-local now="$SECONDS"
 
 while IFS= read -r chain ; do
 	[ -z "$chain" ] && continue

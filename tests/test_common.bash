@@ -10,16 +10,18 @@ QCRYPTD="$(readlink -f "$BATS_TEST_DIRNAME/../qcryptd")"
 QCRYPTD_LOG="${QCRYPTD}.log"
 QCRYPTD_CONF_DIR="$(readlink -f "$BATS_TEST_DIRNAME/../conf")"
 
-#meant to be run inside setup()
-function setupQcryptTesting {
-	#blib setup
+function setupBlib {
 	#NOTE: bats forces us to load blib again every time (if we don't do it here, bats will re-source the entire file for every test anyway)
 	set +e
 	source blib
 	source "$B_LIB_DIR/tests/test_common.bash"
 	set -e
 	B_TEST_MODE=0
+}
 
+#meant to be run inside setup()
+function setupQcryptTesting {
+	setupBlib
 	skipIfNotQubesDom0
 
 	[ -z "$UTD_QUBES_TESTVM" ] && skip "Please specify a static disposable test VM as UTD_QUBES_TESTVM in your user data file $USER_DATA_FILE."

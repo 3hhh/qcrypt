@@ -1,0 +1,11 @@
+# shellcheck config file
+
+enable=add-default-case
+enable=avoid-nullary-conditions
+enable=deprecate-which
+enable=quote-safe-variables
+
+#loads of F/Ps (mostly wrt ret variable):
+disable=SC2155
+disable=SC2178
+disable=SC2128

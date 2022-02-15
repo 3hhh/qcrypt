@@ -39,8 +39,10 @@ QCRYPT_UI_MODE="${QCRYPT_UI_MODE:-auto}"
 B_RC=6
 
 #default options for b_dom0_qvmRun & b_dom0_exec*
+#shellcheck disable=SC2034
 B_DOM0_QVM_RUN_PARAMS=("--no-gui")
 
+#shellcheck disable=SC2088
 QCRYPT_FOLDER="~/.qcrypt"
 QCRYPT_KEYS="$QCRYPT_FOLDER/keys"
 
@@ -214,6 +216,7 @@ assertCorrectParams
 #Make the given parameter a canonical file path.
 #[parameter index]: index for b_args_get (default: 2)
 #returns: Sets a zero exit code only on successful canonicalisation.
+#shellcheck disable=SC2120
 function getCanonicalFileParameter {
 local ind="${1:-2}"
 local fb="$2"
@@ -264,7 +267,7 @@ esac
 
 local keyId="$(b_args_get 3)"
 local keyRegex='^[0-9a-zA-Z_\-\+\.]+$'
-[[ "$keyId" =~ $regex ]] || { B_ERR="The given key ID $keyId appears to be invalid." ; B_E ; }
+[[ "$keyId" =~ $keyRegex ]] || { B_ERR="The given key ID $keyId appears to be invalid." ; B_E ; }
 
 #ensure all regular arguments are non-empty
 local i=
@@ -519,6 +522,7 @@ for ((i=0;i<=$lastInd;i++)) ; do
 	keyPath="$(getKeyPath "$attachTo" "$keyId")" || { B_ERR="Failed to retrieve the key file path inside the VM $attachTo for the key ID $keyId." ; B_E ; }
 	#NOTE: we use the key ID as device mapper name
 	b_info "Decrypting inside ${attachTo}..."
+	#shellcheck disable=SC2154
 	b_dom0_openCrypt "$attachTo" "$attachToDevice" "$mapperName" "$rwFlag" "$mpTo" "$keyPath" "${copt["$attachTo"]}" || { B_ERR="Failed to decrypt the device $attachToDevice inside the VM $attachTo using the key file $keyPath." ; B_E ; }
 
 	#special case: last run
@@ -793,7 +797,7 @@ printf -v mapperNameEsc '%q' "$mapperName"
 
 #attempt umount in the final destination VM
 local err=""
-local dst="${dsts[@]: -1}"
+local dst="${dsts[*]: -1}"
 local ret=-1
 b_info "Umounting the plaintext device inside ${dst}..." 0 1
 local cmd="findmnt -n -o TARGET -S /dev/mapper/$mapperNameEsc | head -n1 | xargs umount -A -R || exit 17"
@@ -923,7 +927,6 @@ sourceFile="$(getCanonicalFileParameter)" || { B_ERR="Failed to canonicalize the
 local keyId="$(b_args_get 3)"
 parseDestinations
 
-local allUp=
 #make sure the given chain is valid by checking its status
 #NOTE: we also check that the chain is mounted as it might otherwise be incomplete (missing target VM) and we don't want a partial closure
 if [ $force -ne 0 ] ; then
@@ -1073,7 +1076,7 @@ local lastVM="$sourceVM"
 local lastDescription="$sourceFile"
 local qvmBlockInfo=""
 local lastUsedBy=""
-local target="${DSTS[@]: -1}"
+local target="${DSTS[*]: -1}"
 qvmBlockInfo="$(b_dom0_parseQvmBlock "map")" || { B_ERR="Failed to parse qvm-block ls." ; B_E ; }
 for dst in "${DSTS[@]}" ; do
 	echo ""
@@ -1178,7 +1181,6 @@ local cand="$1"
 [ -z "$cand" ] && return 1
 local expectedDesc="$2"
 local candUsedBy="${S_DATA["${cand}_used by"]}"
-local candDesc="${S_DATA["${cand}_description"]}"
 local found=0
 local i=
 
@@ -1279,8 +1281,9 @@ local out=
 out="$(cryptsetup status "$decrypted" 2> /dev/null)" || return 1
 
 local line=
+local re='^[[:space:]]*device:[[:space:]]*'"$encrypted"'[[:space:]]*$'
 while IFS= read -r line ; do
-	[[ "$line" =~ ^[[:space:]]*device:[[:space:]]*$encrypted[[:space:]]*$ ]] && return 0
+	[[ "$line" =~ $re ]] && return 0
 done <<< "$out"
 
 return 2
