@@ -69,7 +69,7 @@ CONF_TARGET=
 PROCESS_EVENTS=0
 
 #qrexec timeout
-QREXEC_TIMEOUT="$(qubes-prefs "default_qrexec_timeout")" || { B_ERR="Failed to retrieve the default qrexec timeout." ; B_E }
+QREXEC_TIMEOUT="$(qubes-prefs "default_qrexec_timeout")" || { B_ERR="Failed to retrieve the default qrexec timeout." ; B_E ; }
 
 #internal configuration representation
 #array chains	 : all chains managed by qcryptd
@@ -240,7 +240,7 @@ return 0
 #@StateChanging
 function parseConfigFile {
 local file="$1"
-b_ini_read "$file" || { B_ERR="Failed to parse the file $file." ; B_E }
+b_ini_read "$file" || { B_ERR="Failed to parse the file $file." ; B_E ; }
 
 local chainId="${file##*/}"
 chainId="${chainId%.ini}"
@@ -368,7 +368,7 @@ function getConfigFolder {
 local target="${1:-default}"
 local targetFolder="$QCRYPTD_CONF/$target"
 [ -d "$targetFolder" ] && { echo "$targetFolder" ; return 0 ; } || targetFolder="$QCRYPTD_CONF_2/$target"
-[ -d "$targetFolder" ] && { echo "$targetFolder" ; return 0 ; } || { B_ERR="No configuration for the target $target found in either $QCRYPT_CONF or $QCRYPTD_CONF_2." ; B_E }
+[ -d "$targetFolder" ] && { echo "$targetFolder" ; return 0 ; } || { B_ERR="No configuration for the target $target found in either $QCRYPT_CONF or $QCRYPTD_CONF_2." ; B_E ; }
 }
 
 #parseConfigFiles [target]
@@ -380,7 +380,7 @@ local targetFolder="$QCRYPTD_CONF/$target"
 function parseConfigFiles {
 local target="${1:-default}"
 local targetFolder=""
-targetFolder="$(getConfigFolder "$target")" || { B_ERR="The configuration for the target $target does not exist." ; B_E }
+targetFolder="$(getConfigFolder "$target")" || { B_ERR="The configuration for the target $target does not exist." ; B_E ; }
 
 local file=
 for file in "$targetFolder/"*.ini ; do
@@ -430,7 +430,7 @@ local chain=
 
 local badChains=""
 if [ $execute -eq 0 ] ; then
-	badChains="$(getBadChains "$(b_arr_toList "${CHAINS[@]}")" 2> /dev/null)" || { B_ERR="Failed to obtain the list of chains which are in a bad state." ; B_E }
+	badChains="$(getBadChains "$(b_arr_toList "${CHAINS[@]}")" 2> /dev/null)" || { B_ERR="Failed to obtain the list of chains which are in a bad state." ; B_E ; }
 fi
 
 local prefix=""
@@ -658,13 +658,13 @@ local chain="$1"
 
 #make sure previous operations are completed
 local release=
-release="$(b_mtx_waitFor "${CHAINS2INFO["${chain}_mutex"]}" "$BASHPID")" || { B_ERR="Failed to obtain a mutex." ; B_E }
+release="$(b_mtx_waitFor "${CHAINS2INFO["${chain}_mutex"]}" "$BASHPID")" || { B_ERR="Failed to obtain a mutex." ; B_E ; }
 trap "$release" EXIT RETURN
 
 #execute the pre open command
 local cmd="${CHAINS2INFO["${chain}_pre open command"]}"
 if [ -n "$cmd" ] ; then
-	eval "$cmd" || { B_ERR="The pre open command for the chain $chain returned a non-zero exit code. Thus aborting the chain open process." ; B_E }
+	eval "$cmd" || { B_ERR="The pre open command for the chain $chain returned a non-zero exit code. Thus aborting the chain open process." ; B_E ; }
 fi
 
 #open the chain
@@ -793,7 +793,7 @@ fi
 
 #make sure previous operations are completed
 local release=
-release="$(b_mtx_waitFor "${CHAINS2INFO["${chain}_mutex"]}" "$BASHPID")" || { B_ERR="Failed to obtain a mutex." ; B_E }
+release="$(b_mtx_waitFor "${CHAINS2INFO["${chain}_mutex"]}" "$BASHPID")" || { B_ERR="Failed to obtain a mutex." ; B_E ; }
 trap "$release" EXIT RETURN
 
 #execute the pre close command
@@ -950,7 +950,7 @@ return 0
 #@StateChanging
 function initializeActiveVMs {
 local running=
-running="$(qvm-ls --running -O NAME --raw-list)" || { B_ERR="Faled to execute qvm-ls." ; B_E }
+running="$(qvm-ls --running -O NAME --raw-list)" || { B_ERR="Faled to execute qvm-ls." ; B_E ; }
 
 local vm=
 while IFS= read -r vm ; do
@@ -960,7 +960,7 @@ while IFS= read -r vm ; do
 done <<< "$running"
 
 local paused=
-paused="$(qvm-ls --paused -O NAME --raw-list)" || { B_ERR="Faled to execute qvm-ls." ; B_E }
+paused="$(qvm-ls --paused -O NAME --raw-list)" || { B_ERR="Faled to execute qvm-ls." ; B_E ; }
 
 while IFS= read -r vm ; do
 	[ -z "$vm" ] && continue
@@ -1284,9 +1284,9 @@ local log="$1"
 
 #files may require deletion, if too large
 local lc=
-lc="$(b_fs_getLineCount "$log")" || { B_ERR="Failed to obtain the line count of $log. Permission issues?!" ; B_E }
+lc="$(b_fs_getLineCount "$log")" || { B_ERR="Failed to obtain the line count of $log. Permission issues?!" ; B_E ; }
 if [ $lc -gt $DEBUG_LINES_MAX ] ; then
-	rm -f "$log" || { B_ERR="Failed to remove the file $log." ; B_E }
+	rm -f "$log" || { B_ERR="Failed to remove the file $log." ; B_E ; }
 fi
 
 return 0

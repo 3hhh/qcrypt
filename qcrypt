@@ -194,7 +194,7 @@ function getKeyPath {
 local vm="$1"
 local keyId="$2"
 local vmUser=""
-vmUser="$(qvm-prefs "$vm" default_user)" || { B_ERR="Failed to retrieve the default user for the VM $vm." ; B_E }
+vmUser="$(qvm-prefs "$vm" default_user)" || { B_ERR="Failed to retrieve the default user for the VM $vm." ; B_E ; }
 
 echo "${QCRYPT_KEYS/#~/\/home\/$vmUser}/$keyId"
 }
@@ -222,7 +222,7 @@ local fb="$2"
 local file=
 file="$(b_args_get "$ind" "$fb")" || { echo "$file" ;  return $? ; }
 if [ -n "$file" ] ; then
-	readlink -m "$file" || { B_ERR="Failed to canonicalize the file: $file" ; B_E }
+	readlink -m "$file" || { B_ERR="Failed to canonicalize the file: $file" ; B_E ; }
 fi
 return 0
 }
@@ -264,7 +264,7 @@ esac
 
 local keyId="$(b_args_get 3)"
 local keyRegex='^[0-9a-zA-Z_\-\+\.]+$'
-[[ "$keyId" =~ $regex ]] || { B_ERR="The given key ID $keyId appears to be invalid." ; B_E }
+[[ "$keyId" =~ $regex ]] || { B_ERR="The given key ID $keyId appears to be invalid." ; B_E ; }
 
 #ensure all regular arguments are non-empty
 local i=
@@ -327,9 +327,9 @@ local i=0
 local vm=
 local par=
 while b_args_getOption "--cy" "" "$i" > /dev/null ; do
-	vm="$(b_args_getOption "--cy" "" "$i" 0)" || { B_ERR="Failed to retrieve the VM for the cryptsetup option $i." ; B_E }
-	par="$(b_args_getOption "--cy" "" "$i" 1)" || { B_ERR="Failed to retrieve the parameter for the cryptsetup option $i." ; B_E }
-	b_arr_contains "$vm" "$@" || { B_ERR="The cryptsetup option VM $vm is not part of the destination VMs." ; B_E }
+	vm="$(b_args_getOption "--cy" "" "$i" 0)" || { B_ERR="Failed to retrieve the VM for the cryptsetup option $i." ; B_E ; }
+	par="$(b_args_getOption "--cy" "" "$i" 1)" || { B_ERR="Failed to retrieve the parameter for the cryptsetup option $i." ; B_E ; }
+	b_arr_contains "$vm" "$@" || { B_ERR="The cryptsetup option VM $vm is not part of the destination VMs." ; B_E ; }
 	#NOTE: we don't escape here as the user is allowed to concatenate parameters himself --> he needs to escape himself (but cryptsetup appears to have almost no options that might require escaping)
 	ret["$vm"]="${ret["$vm"]} $par"
 	i=$(($i +1))
@@ -378,7 +378,7 @@ function retrieveFromKeyStore {
 local vm="$1"
 local keyId="$2"
 local storeDir="$3"
-b_execFuncAs "root" "retrieveFromKeyStore_root" "fs" "multithreading/mtx" "dmcrypt" "keys" - - "$@" || { B_ERR="Failed to retrieve the key $keyId for the VM $vm from the key store $storeDir." ; B_E }
+b_execFuncAs "root" "retrieveFromKeyStore_root" "fs" "multithreading/mtx" "dmcrypt" "keys" - - "$@" || { B_ERR="Failed to retrieve the key $keyId for the VM $vm from the key store $storeDir." ; B_E ; }
 }
 
 #see open @usage
@@ -392,7 +392,7 @@ declare -A injections
 local sourceVM="$(b_args_get 1)"
 
 local sourceFile=
-sourceFile="$(getCanonicalFileParameter)" || { B_ERR="Failed to canonicalize the source file parameter." ; B_E }
+sourceFile="$(getCanonicalFileParameter)" || { B_ERR="Failed to canonicalize the source file parameter." ; B_E ; }
 
 local keyId="$(b_args_get 3)"
 
@@ -408,21 +408,21 @@ local i=0
 local injTarget=
 local injKey=
 while b_args_getOption "--inj" "" "$i" > /dev/null ; do
-	injTarget="$(b_args_getOption "--inj" "" "$i" 0)" || { B_ERR="Failed to retrieve the target VM for the injection $i." ; B_E }
-	injKey="$(b_args_getOption "--inj" "" "$i" 1)" || { B_ERR="Failed to retrieve the key for the injection $i." ; B_E }
-	b_arr_contains "$injTarget" "${DSTS[@]}" || { B_ERR="The injection VM $injTarget is not part of the destination VMs." ; B_E }
+	injTarget="$(b_args_getOption "--inj" "" "$i" 0)" || { B_ERR="Failed to retrieve the target VM for the injection $i." ; B_E ; }
+	injKey="$(b_args_getOption "--inj" "" "$i" 1)" || { B_ERR="Failed to retrieve the key for the injection $i." ; B_E ; }
+	b_arr_contains "$injTarget" "${DSTS[@]}" || { B_ERR="The injection VM $injTarget is not part of the destination VMs." ; B_E ; }
 	if [[ "$injKey" == "keystore://"* ]] ; then
 		local storeDir="${injKey#keystore:/}"
-		injKey="$(retrieveFromKeyStore "$injTarget" "$keyId" "$storeDir")" || { B_ERR="Could not resolve injection: Failed to retrieve the key $keyId for the VM $injTarget from the key store $storeDir." ; B_E }
+		injKey="$(retrieveFromKeyStore "$injTarget" "$keyId" "$storeDir")" || { B_ERR="Could not resolve injection: Failed to retrieve the key $keyId for the VM $injTarget from the key store $storeDir." ; B_E ; }
 	fi
 	injections["$injTarget"]="$injKey"
-	[ -f "$injKey" ] || { B_ERR="No such file: $injKey" ; B_E }
+	[ -f "$injKey" ] || { B_ERR="No such file: $injKey" ; B_E ; }
 	i=$(($i +1))
 done
 
 local coptStr=
-coptStr="$(parseCryptsetupParams "copt" "${DSTS[@]}")" || { B_ERR="Failed to parse the cryptsetup parameters." ; B_E }
-eval "$coptStr" || { B_ERR="Programming error?!" ; B_E }
+coptStr="$(parseCryptsetupParams "copt" "${DSTS[@]}")" || { B_ERR="Failed to parse the cryptsetup parameters." ; B_E ; }
+eval "$coptStr" || { B_ERR="Programming error?!" ; B_E ; }
 
 #make sure that the open doesn't f*ck things up
 b_info "Checking whether the chain is fully closed..."
@@ -461,7 +461,7 @@ case $? in
 		;;
 	7)
 		#existing loop device
-		b_dom0_removeUnusedLoopDevice "$sourceVM" "$sourceFile" 1 || { B_ERR="$sourceFile inside $sourceVM is either in use by Qubes OS or by the VM itself. Please check qvm-block ls. Backing off..." ; B_E }
+		b_dom0_removeUnusedLoopDevice "$sourceVM" "$sourceFile" 1 || { B_ERR="$sourceFile inside $sourceVM is either in use by Qubes OS or by the VM itself. Please check qvm-block ls. Backing off..." ; B_E ; }
 
 		#all good
 		;;
@@ -471,7 +471,7 @@ case $? in
 esac
 #it is a file --> we need to create a loop device
 local toCreate="$sourceFile"
-sourceFile="$(b_dom0_createLoopDeviceIfNecessary "$sourceVM" "$toCreate")" || { B_ERR="Failed to create a loop device for the file $toCreate in the VM $sourceVM." ; B_E }
+sourceFile="$(b_dom0_createLoopDeviceIfNecessary "$sourceVM" "$toCreate")" || { B_ERR="Failed to create a loop device for the file $toCreate in the VM $sourceVM." ; B_E ; }
 
 #inject keys (if necessary)
 local injTarget=""
@@ -515,11 +515,11 @@ for ((i=0;i<=$lastInd;i++)) ; do
 	[ $i -eq $lastInd ] && mpTo="$mountPoint" || mpTo=""
 
 	b_info "Attaching to ${attachTo}..."
-	attachToDevice="$(b_dom0_crossAttachDevice "$attachFrom" "$attachFromDevice" "$attachTo" "$rwFlag")" || { B_ERR="Failed to attach the device $attachFromDevice from the VM $attachFrom to the VM $attachTo." ; B_E }
-	keyPath="$(getKeyPath "$attachTo" "$keyId")" || { B_ERR="Failed to retrieve the key file path inside the VM $attachTo for the key ID $keyId." ; B_E }
+	attachToDevice="$(b_dom0_crossAttachDevice "$attachFrom" "$attachFromDevice" "$attachTo" "$rwFlag")" || { B_ERR="Failed to attach the device $attachFromDevice from the VM $attachFrom to the VM $attachTo." ; B_E ; }
+	keyPath="$(getKeyPath "$attachTo" "$keyId")" || { B_ERR="Failed to retrieve the key file path inside the VM $attachTo for the key ID $keyId." ; B_E ; }
 	#NOTE: we use the key ID as device mapper name
 	b_info "Decrypting inside ${attachTo}..."
-	b_dom0_openCrypt "$attachTo" "$attachToDevice" "$mapperName" "$rwFlag" "$mpTo" "$keyPath" "${copt["$attachTo"]}" || { B_ERR="Failed to decrypt the device $attachToDevice inside the VM $attachTo using the key file $keyPath." ; B_E }
+	b_dom0_openCrypt "$attachTo" "$attachToDevice" "$mapperName" "$rwFlag" "$mpTo" "$keyPath" "${copt["$attachTo"]}" || { B_ERR="Failed to decrypt the device $attachToDevice inside the VM $attachTo using the key file $keyPath." ; B_E ; }
 
 	#special case: last run
 	if [ $i -eq $lastInd ] ; then
@@ -530,8 +530,8 @@ for ((i=0;i<=$lastInd;i++)) ; do
 		#example for /dev/mapper/foo:
 		#testing-vm:dm-2    foo
 		local qvmBlockInfo=""
-		qvmBlockInfo="$(b_dom0_parseQvmBlock "map")" || { B_ERR="Failed to parse qvm-block ls." ; B_E }
-		attachFromDevice="$(b_dom0_getQvmBlockInfo "$qvmBlockInfo" "device id" "backend" "$attachTo" "description" "$mapperName" "frontend-dev" "")" || { B_ERR="Failed to find the correct backend device ID for the mapper $mapperName inside the VM $attachTo." ; B_E }
+		qvmBlockInfo="$(b_dom0_parseQvmBlock "map")" || { B_ERR="Failed to parse qvm-block ls." ; B_E ; }
+		attachFromDevice="$(b_dom0_getQvmBlockInfo "$qvmBlockInfo" "device id" "backend" "$attachTo" "description" "$mapperName" "frontend-dev" "")" || { B_ERR="Failed to find the correct backend device ID for the mapper $mapperName inside the VM $attachTo." ; B_E ; }
 		attachFrom="$attachTo"
 	fi
 done
@@ -567,7 +567,7 @@ local dir="$1"
 local req="$2"
 local avail=""
 
-avail="$(df -B1 --output=avail "$dir")" || { B_ERR="Failed to run df on the directory $dir." ; B_E }
+avail="$(df -B1 --output=avail "$dir")" || { B_ERR="Failed to run df on the directory $dir." ; B_E ; }
 
 local line=
 while IFS= read -r line ; do
@@ -583,7 +583,7 @@ function luksInitC {
 #parse params
 local sourceVM="$(b_args_get 1)"
 local sourceFile=
-sourceFile="$(getCanonicalFileParameter)" || { B_ERR="Failed to canonicalize the source file parameter." ; B_E }
+sourceFile="$(getCanonicalFileParameter)" || { B_ERR="Failed to canonicalize the source file parameter." ; B_E ; }
 local keyId="$(b_args_get 3)"
 parseDestinations
 
@@ -591,24 +591,24 @@ local autostart=1
 b_args_getOption "-a" > /dev/null && autostart=0
 
 local size="$(b_args_getOption "--size" "1073741824")"
-size="$(b_fs_parseSize "$size")" || { B_ERR="Failed to parse the --size parameter: $size" ; B_E }
+size="$(b_fs_parseSize "$size")" || { B_ERR="Failed to parse the --size parameter: $size" ; B_E ; }
 
 local workingDir="$(b_args_getOption "--wd" "/tmp")"
-mkdir -p "$workingDir" || { B_ERR="Failed to create $workingDir." ; B_E }
-[ -d "$workingDir" ] || { B_ERR="No directory: $workingDir" ; B_E }
+mkdir -p "$workingDir" || { B_ERR="Failed to create $workingDir." ; B_E ; }
+[ -d "$workingDir" ] || { B_ERR="No directory: $workingDir" ; B_E ; }
 
 local keySize="$(b_args_getOptionInt "--ks" "100")"
 
 local enKey="$(b_args_getOption "--enkey" "/dev/random")"
-[ -c "$enKey" ] || { B_ERR="No valid entropy source: $enKey" ; B_E }
+[ -c "$enKey" ] || { B_ERR="No valid entropy source: $enKey" ; B_E ; }
 
 local enCon="$(b_args_getOption "--encon" "/dev/urandom")"
-[ -c "$enCon" ] || { B_ERR="No valid entropy source: $enCon" ; B_E }
+[ -c "$enCon" ] || { B_ERR="No valid entropy source: $enCon" ; B_E ; }
 
 local keyBackupFolder="$(b_args_getOption "--bak")"
 if [ -n "$keyBackupFolder" ] ; then
-	mkdir -p "$keyBackupFolder" || { B_ERR="Failed to create $keyBackupFolder." ; B_E }
-	[ -d "$keyBackupFolder" ] || { B_ERR="No directory: $keyBackupFolder" ; B_E }
+	mkdir -p "$keyBackupFolder" || { B_ERR="Failed to create $keyBackupFolder." ; B_E ; }
+	[ -d "$keyBackupFolder" ] || { B_ERR="No directory: $keyBackupFolder" ; B_E ; }
 fi
 
 local keyStore="$(b_args_getOption "--keystore")"
@@ -620,15 +620,15 @@ fi
 local fsType="$(b_args_getOption "--fs" "ext4")"
 
 local coptStr=
-coptStr="$(parseCryptsetupParams "copt" "${DSTS[@]}")" || { B_ERR="Failed to parse the cryptsetup parameters." ; B_E }
-eval "$coptStr" || { B_ERR="Programming error?!" ; B_E }
+coptStr="$(parseCryptsetupParams "copt" "${DSTS[@]}")" || { B_ERR="Failed to parse the cryptsetup parameters." ; B_E ; }
+eval "$coptStr" || { B_ERR="Programming error?!" ; B_E ; }
 
 #safety checks
 b_info "Doing some safety checks..."
 # a. we need to be root in dom0
 b_enforceUser "root"
 # b. we need to have enough space in dom0
-checkAvailableSpace "$workingDir" "$size" || { B_ERR="$workingDir provides less space than required by the --size parameter." ; B_E }
+checkAvailableSpace "$workingDir" "$size" || { B_ERR="$workingDir provides less space than required by the --size parameter." ; B_E ; }
 # c. all necessary VMs must run
 [ $autostart -eq 0 ] && b_dom0_ensureRunning "$sourceVM" "${DSTS[@]}" || b_dom0_isRunning "$sourceVM" "${DSTS[@]}"
 # d. make sure the source VM doesn't already have a file named $sourceFile
@@ -638,7 +638,7 @@ local dst=""
 local vmKeyPath=""
 declare -A vmKeyPaths
 for dst in "${DSTS[@]}" ; do
-	vmKeyPath="$(getKeyPath "$dst" "$keyId")" || { B_ERR="Failed to retrieve the key file path inside the VM $dst for the key ID $keyId." ; B_E }
+	vmKeyPath="$(getKeyPath "$dst" "$keyId")" || { B_ERR="Failed to retrieve the key file path inside the VM $dst for the key ID $keyId." ; B_E ; }
 	vmKeyPaths["$dst"]="$vmKeyPath"
 	ensureFileDoesNotExistIn "$dst" "$vmKeyPath"
 done
@@ -646,17 +646,17 @@ done
 #init container
 local dom0Container=""
 local cmd=""
-dom0Container="$(mktemp -p "$workingDir")" || { B_ERR="Failed to create a temporary file." ; B_E }
+dom0Container="$(mktemp -p "$workingDir")" || { B_ERR="Failed to create a temporary file." ; B_E ; }
 printf -v cmd 'rm -f %q' "$dom0Container"
-b_traps_add "$cmd" EXIT || { B_ERR="Failed to register a cleanup trap." ; B_E }
+b_traps_add "$cmd" EXIT || { B_ERR="Failed to register a cleanup trap." ; B_E ; }
 b_info "Initializing the luks container (this may take a while)..."
-head -c $size < "$enCon" > "$dom0Container" || { B_ERR="Failed to initialize the container at $dom0Container." ; B_E }
+head -c $size < "$enCon" > "$dom0Container" || { B_ERR="Failed to initialize the container at $dom0Container." ; B_E ; }
 
 #create a loop device for the container
 local dom0ContainerLoop=""
-dom0ContainerLoop="$(losetup -f --show "$dom0Container")" || { B_ERR="Failed to create a loop device." ; B_E }
+dom0ContainerLoop="$(losetup -f --show "$dom0Container")" || { B_ERR="Failed to create a loop device." ; B_E ; }
 printf -v cmd 'losetup -d %q' "$dom0ContainerLoop"
-b_traps_prepend "$cmd" EXIT || { B_ERR="Failed to register a cleanup trap." ; B_E }
+b_traps_prepend "$cmd" EXIT || { B_ERR="Failed to register a cleanup trap." ; B_E ; }
 
 #generate key files & add encryption layers
 local dom0KeyFile=""
@@ -665,29 +665,29 @@ local curDevice="$dom0ContainerLoop"
 for dst in "${DSTS[@]}" ; do
 	#generate key
 	b_info "Generating the key for the VM ${dst}..."
-	dom0KeyFile="$(mktemp -p "$workingDir")" || { B_ERR="Failed to create a temporary file." ; B_E }
+	dom0KeyFile="$(mktemp -p "$workingDir")" || { B_ERR="Failed to create a temporary file." ; B_E ; }
 	printf -v cmd 'b_fs_removeWithOverwrite %q' "$dom0KeyFile"
-	b_traps_add "$cmd" EXIT || { B_ERR="Failed to register a cleanup trap." ; B_E }
-	head -c "$keySize" < "$enKey" > "$dom0KeyFile" || { B_ERR="Failed to initialize the key for the VM $dst at $dom0KeyFile." ; B_E }
+	b_traps_add "$cmd" EXIT || { B_ERR="Failed to register a cleanup trap." ; B_E ; }
+	head -c "$keySize" < "$enKey" > "$dom0KeyFile" || { B_ERR="Failed to initialize the key for the VM $dst at $dom0KeyFile." ; B_E ; }
 	dom0KeyFiles["$dst"]="$dom0KeyFile"
 
 	#format
 	b_info "Generating the encryption layer for the VM ${dst}..."
-	cryptsetup -q --key-file "$dom0KeyFile" ${copt["$dst"]} luksFormat "$curDevice" || { B_ERR="Failed to run cryptsetup luksFormat." ; B_E }
+	cryptsetup -q --key-file "$dom0KeyFile" ${copt["$dst"]} luksFormat "$curDevice" || { B_ERR="Failed to run cryptsetup luksFormat." ; B_E ; }
 
 	#open the newly created layer
 	b_info "Switching to the next encryption layer..."
 	local luksName="$dst-$keyId"
-	cryptsetup open --type luks --key-file "$dom0KeyFile" "$curDevice" "$luksName" || { B_ERR="Failed to open the encryption layer created for the VM $dst." ; B_E }
+	cryptsetup open --type luks --key-file "$dom0KeyFile" "$curDevice" "$luksName" || { B_ERR="Failed to open the encryption layer created for the VM $dst." ; B_E ; }
 	printf -v cmd 'cryptsetup close %q' "$luksName"
-	b_traps_prepend "$cmd" EXIT || { B_ERR="Failed to register a cleanup trap." ; B_E }
+	b_traps_prepend "$cmd" EXIT || { B_ERR="Failed to register a cleanup trap." ; B_E ; }
 	curDevice="/dev/mapper/$luksName"
 done
 
 #optional: generate file system
 if [ -n "$fsType" ] ; then
 	b_info "Creating the file system..."
-	mkfs -t "$fsType" "$curDevice" &> /dev/null || { B_ERR="Failed to create the file system of type $fsType on $curDevice." ; B_E }
+	mkfs -t "$fsType" "$curDevice" &> /dev/null || { B_ERR="Failed to create the file system of type $fsType on $curDevice." ; B_E ; }
 fi
 
 #optional: create a backup of the keys in dom0
@@ -699,7 +699,7 @@ if [ -n "$keyBackupFolder" ] ; then
 		dom0KeyFile="${dom0KeyFiles["$dst"]}"
 		local bakFile="$keyBackupFolder/${dst}_$keyId"
 		[ -e "$bakFile" ] && B_ERR="A file called $bakFile already exists. Rejecting to overwrite." && B_E
-		cp "$dom0KeyFile" "$bakFile" || { B_ERR="Failed to copy the key file $dom0KeyFile to $bakFile." ; B_E }
+		cp "$dom0KeyFile" "$bakFile" || { B_ERR="Failed to copy the key file $dom0KeyFile to $bakFile." ; B_E ; }
 		chmod 666 "$bakFile"
 	done
 fi
@@ -720,13 +720,13 @@ for dst in "${DSTS[@]}" ; do
 	dom0KeyFile="${dom0KeyFiles["$dst"]}"
 	vmKeyPath="${vmKeyPaths["$dst"]}"
 	b_info "Passing the key $dom0KeyFile to the VM $dst as $vmKeyPath..."
-	b_dom0_copy "$dom0KeyFile" "$dst" "$vmKeyPath" 1 1 || { B_ERR="Failed to copy the key file $dom0KeyFile." ; B_E }
+	b_dom0_copy "$dom0KeyFile" "$dst" "$vmKeyPath" 1 1 || { B_ERR="Failed to copy the key file $dom0KeyFile." ; B_E ; }
 done
 
 #pass the container to the source VM
 b_info "Copying the encrypted container to the VM $sourceVM at ${sourceFile}..."
 sync
-b_dom0_copy "$dom0Container" "$sourceVM" "$sourceFile" 1 1 || { B_ERR="Failed to copy the encrypted container to the source VM $sourceVM." ; B_E }
+b_dom0_copy "$dom0Container" "$sourceVM" "$sourceFile" 1 1 || { B_ERR="Failed to copy the encrypted container to the source VM $sourceVM." ; B_E ; }
 sync
 
 b_info "Luks init done."
@@ -807,12 +807,12 @@ elif [ $ret -eq 0 ] ; then
 	b_info "Done." 1 0
 else
 	err="Failed to umount."
-	[ $force -eq 0 ] && b_info "$err Proceeding anyway..." 1 0 || { B_ERR="$err No point in proceeding." ; B_E }
+	[ $force -eq 0 ] && b_info "$err Proceeding anyway..." 1 0 || { B_ERR="$err No point in proceeding." ; B_E ; }
 fi
 
 #cryptsetup close & detach afterwards in all VMs (if necessary)
 local qvmBlockInfo=""
-qvmBlockInfo="$(b_dom0_parseQvmBlock "map")" || { B_ERR="Failed to parse qvm-block ls." ; B_E }
+qvmBlockInfo="$(b_dom0_parseQvmBlock "map")" || { B_ERR="Failed to parse qvm-block ls." ; B_E ; }
 local i=
 local desc=
 for ((i=${#dsts[@]}-1;i >= 0;i--)) ; do
@@ -833,7 +833,7 @@ for ((i=${#dsts[@]}-1;i >= 0;i--)) ; do
 			;;
 		*)
 			err="Failed to close the dm-crypt device (status: $ret)."
-			[ $force -eq 0 ] && b_info "$err Proceeding anyway..." 1 0 || { B_ERR="$err No point in proceeding." ; B_E }
+			[ $force -eq 0 ] && b_info "$err Proceeding anyway..." 1 0 || { B_ERR="$err No point in proceeding." ; B_E ; }
 	esac
 
 	#detach
@@ -851,7 +851,7 @@ for ((i=${#dsts[@]}-1;i >= 0;i--)) ; do
 	b_info "Detaching the device from the VM $vm..." 0 1
 	local backend=""
 	backend="$(b_dom0_getQvmBlockInfo "$qvmBlockInfo" "id" "description" "$desc" "used by" "$vm")"
-	[ $? -eq $B_RC ] && { B_ERR="Failed to parse qvm-block ls." ; B_E }
+	[ $? -eq $B_RC ] && { B_ERR="Failed to parse qvm-block ls." ; B_E ; }
 	if [ -z "$backend" ] ; then
 		b_info "Was not attached. All good." 1 0
 	else
@@ -866,7 +866,7 @@ for ((i=${#dsts[@]}-1;i >= 0;i--)) ; do
 				b_info "Done." 1 0
 			else
 				err="Failed to detach the backend $backend from the VM $vm. No point in proceeding."
-				[ $force -eq 0 ] && b_info "$err Proceeding anyway..." 1 0 || { B_ERR="$err No point in proceeding." ; B_E }
+				[ $force -eq 0 ] && b_info "$err Proceeding anyway..." 1 0 || { B_ERR="$err No point in proceeding." ; B_E ; }
 			fi
 		fi
 	fi
@@ -919,7 +919,7 @@ b_args_getOption "--sd" > /dev/null && shutdown=0
 
 local sourceVM="$(b_args_get 1)"
 local sourceFile=
-sourceFile="$(getCanonicalFileParameter)" || { B_ERR="Failed to canonicalize the source file parameter." ; B_E }
+sourceFile="$(getCanonicalFileParameter)" || { B_ERR="Failed to canonicalize the source file parameter." ; B_E ; }
 local keyId="$(b_args_get 3)"
 parseDestinations
 
@@ -929,7 +929,7 @@ local allUp=
 if [ $force -ne 0 ] ; then
 	b_info "Checking the validity of the chain..." 0 1
 	local state=""
-	state="$(b_args_parse "status" "$sourceVM" "$sourceFile" "$keyId" "${DSTS[@]}" ; statusSingleC)" || { B_ERR="The chain has a bad status - check it below. If you want to continue nonetheless, use --force."$'\n'"$state" ; B_E }
+	state="$(b_args_parse "status" "$sourceVM" "$sourceFile" "$keyId" "${DSTS[@]}" ; statusSingleC)" || { B_ERR="The chain has a bad status - check it below. If you want to continue nonetheless, use --force."$'\n'"$state" ; B_E ; }
 	b_info "Done. All good." 1 0
 	cleanClose "$force" "$shutdown" "$sourceVM" "$sourceFile" "$keyId" "${DSTS[@]}"
 else
@@ -1011,7 +1011,7 @@ mpSpecified=$?
 
 local sourceVM="$(b_args_get 1)"
 local sourceFile=
-sourceFile="$(getCanonicalFileParameter)" || { B_ERR="Failed to canonicalize the source file parameter." ; B_E }
+sourceFile="$(getCanonicalFileParameter)" || { B_ERR="Failed to canonicalize the source file parameter." ; B_E ; }
 local keyId="$(b_args_get 3)"
 parseDestinations
 
@@ -1074,7 +1074,7 @@ local lastDescription="$sourceFile"
 local qvmBlockInfo=""
 local lastUsedBy=""
 local target="${DSTS[@]: -1}"
-qvmBlockInfo="$(b_dom0_parseQvmBlock "map")" || { B_ERR="Failed to parse qvm-block ls." ; B_E }
+qvmBlockInfo="$(b_dom0_parseQvmBlock "map")" || { B_ERR="Failed to parse qvm-block ls." ; B_E ; }
 for dst in "${DSTS[@]}" ; do
 	echo ""
 
@@ -1093,7 +1093,7 @@ for dst in "${DSTS[@]}" ; do
 	fi
 
 	#some needed parameters
-	keyPath="$(getKeyPath "$dst" "$keyId")" || { B_ERR="Failed to retrieve the key path for the VM $dst." ; B_E }
+	keyPath="$(getKeyPath "$dst" "$keyId")" || { B_ERR="Failed to retrieve the key path for the VM $dst." ; B_E ; }
 	#example qvm-block ls output:
 	#result of `qcrypt open -- disp287 /tmp/foo4 foo4 testing-pers d-testing`
 	#BACKEND:DEVID        DESCRIPTION  USED BY
@@ -1105,11 +1105,11 @@ for dst in "${DSTS[@]}" ; do
 	# - the description in Qubes OS is the name of the device mapper (and the device for the sourceVM) --> we know that the mapper is the keyId by convention, i.e. we can search for that
 	# - we need to find the frontend-dev with a backend equal to the last VM
 	devName="$(b_dom0_getQvmBlockInfo "$qvmBlockInfo" "frontend-dev" "backend" "$lastVM" "description" "$lastDescription")"
-	[ $? -eq $B_RC ] && { B_ERR="Failed to parse qvm-block ls." ; B_E }
+	[ $? -eq $B_RC ] && { B_ERR="Failed to parse qvm-block ls." ; B_E ; }
 
 	#make sure the chain makes sense / ignore non-matching devices
 	lastUsedBy="$(b_dom0_getQvmBlockInfo "$qvmBlockInfo" "used by" "backend" "$lastVM" "description" "$lastDescription")"
-	[ $? -eq $B_RC ] && { B_ERR="Failed to parse qvm-block ls." ; B_E }
+	[ $? -eq $B_RC ] && { B_ERR="Failed to parse qvm-block ls." ; B_E ; }
 	[[ "$dst" != "$lastUsedBy" ]] && devName=""
 	
 	#device attached?
@@ -1161,7 +1161,7 @@ printf "$statusFormat" "device mounted" "$statMounted"
 #make sure the target is not used by anything (otherwise it would be an invalid target)
 #NOTE: if nothing is attached/mounted/whatever, this check will also succeed
 lastUsedBy="$(b_dom0_getQvmBlockInfo "$qvmBlockInfo" "used by" "backend" "$target" "description" "$keyId")"
-[ $? -eq $B_RC ] && { B_ERR="Failed to parse qvm-block ls." ; B_E }
+[ $? -eq $B_RC ] && { B_ERR="Failed to parse qvm-block ls." ; B_E ; }
 [ -n "$lastUsedBy" ] && B_ERR="The target VM $target appears to be used by $lastUsedBy as part of a chain. Is the chain incomplete?" && B_E
 
 #set exit code
@@ -1290,9 +1290,9 @@ return 2
 #@B_E
 function statusAllC {
 local qvmBlockInfo=""
-qvmBlockInfo="$(b_dom0_parseQvmBlock "S_BLOCK")" || { B_ERR="Failed to parse qvm-block ls." ; B_E }
+qvmBlockInfo="$(b_dom0_parseQvmBlock "S_BLOCK")" || { B_ERR="Failed to parse qvm-block ls." ; B_E ; }
 qvmBlockInfo="${qvmBlockInfo/declare -A/declare -gA}"
-eval "$qvmBlockInfo" || { B_ERR="b_dom0_parseQvmBlock output incorrect." ; B_E }
+eval "$qvmBlockInfo" || { B_ERR="b_dom0_parseQvmBlock output incorrect." ; B_E ; }
 
 #example qvm-block ls output:
 #result of `qcrypt open -- disp287 /tmp/foo4 foo4 testing-pers d-testing`
