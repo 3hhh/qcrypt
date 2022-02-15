@@ -266,7 +266,7 @@ esac
 [ $numArgs -lt 5 ] && usage
 
 local keyId="$(b_args_get 3)"
-local keyRegex='^[0-9a-zA-Z_\-\+\.]+$'
+local keyRegex='^[0-9a-zA-Z_+.-]+$'
 [[ "$keyId" =~ $keyRegex ]] || { B_ERR="The given key ID $keyId appears to be invalid." ; B_E ; }
 
 #ensure all regular arguments are non-empty
