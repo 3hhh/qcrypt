@@ -670,7 +670,7 @@ for dst in "${DSTS[@]}" ; do
 	#generate key
 	b_info "Generating the key for the VM ${dst}..."
 	dom0KeyFile="$(mktemp -p "$workingDir")" || { B_ERR="Failed to create a temporary file." ; B_E ; }
-	printf -v cmd 'b_fs_removeWithOverwrite %q' "$dom0KeyFile"
+	printf -v cmd 'b_fs_removeRelativelySafely %q' "$dom0KeyFile"
 	b_traps_add "$cmd" EXIT || { B_ERR="Failed to register a cleanup trap." ; B_E ; }
 	head -c "$keySize" < "$enKey" > "$dom0KeyFile" || { B_ERR="Failed to initialize the key for the VM $dst at $dom0KeyFile." ; B_E ; }
 	dom0KeyFiles["$dst"]="$dom0KeyFile"
@@ -715,7 +715,7 @@ if [ -n "$keyStore" ] ; then
 
 	for dst in "${DSTS[@]}" ; do
 		dom0KeyFile="${dom0KeyFiles["$dst"]}"
-		b_keys_add "${dst}_$keyId" "$dom0KeyFile" 0
+		b_keys_add "${dst}_$keyId" "$dom0KeyFile"
 	done
 fi
 
