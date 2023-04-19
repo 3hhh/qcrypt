@@ -627,6 +627,16 @@ local coptStr=
 coptStr="$(parseCryptsetupParams "copt" "${DSTS[@]}")" || { B_ERR="Failed to parse the cryptsetup parameters." ; B_E ; }
 eval "$coptStr" || { B_ERR="Programming error?!" ; B_E ; }
 
+#luks2 has high memory requirements, which we need to fix (https://gitlab.com/cryptsetup/cryptsetup/-/issues/372)
+local dst=
+for dst in "${DSTS[@]}" ; do
+	local opts="${copt["$dst"]}"
+	if [[ "$opts" != *"--type"** ]] && [[ "$opts" != *"--pbkdf-memory"* ]] ; then
+		#limit the memory requirements to 10MB
+		copt["$dst"]="$opts --pbkdf-memory 10240"
+	fi
+done
+
 #safety checks
 b_info "Doing some safety checks..."
 # a. we need to be root in dom0
