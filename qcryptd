@@ -1080,7 +1080,7 @@ case "$eventName" in
 	#VM started
 	"domain-start")
 		ACTIVE_VMS["$vm"]=0
-		unset LAST_START_ATTEMPT["$vm"]
+		unset 'LAST_START_ATTEMPT["$vm"]'
 
 		#react
 		#(no suppression needed, there's just one event)
@@ -1100,10 +1100,10 @@ case "$eventName" in
 	#VM stopped (triggered on shutdown & kill)
 	"domain-shutdown")
 		ACTIVE_VMS["$vm"]=1
-		unset LAST_SHUTDOWN_ATTEMPT["$vm"]
+		unset 'LAST_SHUTDOWN_ATTEMPT["$vm"]'
 
 		#some state cleanup
-		unset SUPPRESSION["${vm}_device-list-change:block"]
+		unset 'SUPPRESSION["${vm}_device-list-change:block"]'
 
 		#react
 		#(no suppression needed, there's just one event)

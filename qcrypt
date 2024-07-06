@@ -220,10 +220,11 @@ assertCorrectParams
 function getCanonicalFileParameter {
 local ind="${1:-2}"
 local fb="$2"
+local ret=
 
 #canonicalize the file (users may pass e.g. /foo//bar --> /foo/bar however is expected by qcrypt)
 local file=
-file="$(b_args_get "$ind" "$fb")" || { echo "$file" ;  return $? ; }
+file="$(b_args_get "$ind" "$fb")" || { ret=$? ; echo "$file" ;  return $ret ; }
 if [ -n "$file" ] ; then
 	readlink -m "$file" || { B_ERR="Failed to canonicalize the file: $file" ; B_E ; }
 fi
