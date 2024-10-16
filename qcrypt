@@ -21,7 +21,7 @@
 
 #init blib
 source blib
-b_checkVersion 1 5 || { >&2 echo "This script depends on blib (https://github.com/3hhh/blib) version 1.5 or higher. Please install a supported version." ; exit 1 ; }
+b_checkVersion 1 6 || { >&2 echo "This script depends on blib (https://github.com/3hhh/blib) version 1.6 or higher. Please install a supported version." ; exit 1 ; }
 eval "$B_SCRIPT"
 b_import "args"
 b_import "traps"
@@ -300,11 +300,10 @@ local reDecrypted='device decrypted:[[:space:]]+no'
 local devAttachedNoCnt=0
 local devDecryptedCnt=0
 
-local line=
-while IFS= read -r line ; do
-	if [[ "$line" =~ $reAttached ]] ; then
+while b_readLine ; do
+	if [[ "$B_LINE" =~ $reAttached ]] ; then
 		(( devAttachedNoCnt++ ))
-	elif [[ "$line" =~ $reDecrypted ]] ; then
+	elif [[ "$B_LINE" =~ $reDecrypted ]] ; then
 		(( devDecryptedCnt++ ))
 	fi
 done <<< "$state"
@@ -574,9 +573,8 @@ local avail=""
 
 avail="$(df -B1 --output=avail "$dir")" || { B_ERR="Failed to run df on the directory $dir." ; B_E ; }
 
-local line=
-while IFS= read -r line ; do
-	[[ "$line" =~ ^([0-9]+) ]] && avail="${BASH_REMATCH[1]}" && break
+while b_readLine ; do
+	[[ "$B_LINE" =~ ^([0-9]+) ]] && avail="${BASH_REMATCH[1]}" && break
 done <<< "$avail"
 
 [ $avail -gt $req ]
@@ -1291,10 +1289,9 @@ local decrypted="/dev/$2"
 local out=
 out="$(cryptsetup status "$decrypted" 2> /dev/null)" || return 1
 
-local line=
 local re='^[[:space:]]*device:[[:space:]]*'"$encrypted"'[[:space:]]*$'
-while IFS= read -r line ; do
-	[[ "$line" =~ $re ]] && return 0
+while b_readLine ; do
+	[[ "$B_LINE" =~ $re ]] && return 0
 done <<< "$out"
 
 return 2

@@ -21,7 +21,7 @@
 
 #init blib
 source blib
-b_checkVersion 1 5 || { >&2 echo "This script depends on blib (https://github.com/3hhh/blib) version 1.5 or higher. Please install a supported version." ; exit 1 ; }
+b_checkVersion 1 6 || { >&2 echo "This script depends on blib (https://github.com/3hhh/blib) version 1.6 or higher. Please install a supported version." ; exit 1 ; }
 eval "$B_SCRIPT"
 b_import "arr"
 b_import "args"
@@ -749,7 +749,7 @@ local chains="${VMS2CHAINS["$vm"]}"
 
 local chain=
 local toOpen=()
-while IFS= read -r chain ; do
+while b_readLine chain ; do
 	[ -z "$chain" ] && continue
 	[ $all -ne 0 ] && [[ "$vm" != "${CHAINS2INFO["${chain}_source vm"]}" ]] && continue
 	toOpen+=("$chain")
@@ -851,7 +851,7 @@ local cmd=
 #chain id --> pid
 declare -A pids=()
 
-while IFS= read -r chain ; do
+while b_readLine chain ; do
 	[ -z "$chain" ] && continue
 	#NOTE: all VMs are likely running (we only get here for device attachments), no need to check
 
@@ -891,7 +891,7 @@ function filterChainsWithPausedDest {
 local list="$1"
 
 local chain=
-while IFS= read -r chain ; do
+while b_readLine chain ; do
 	[ -z "$chain" ] && continue
 	local final="${CHAINS2INFO["${chain}_final destination vm"]}"
 	if isPaused "$final" ; then
@@ -934,7 +934,7 @@ fi
 
 local chain=
 local toClose=()
-while IFS= read -r chain ; do
+while b_readLine chain ; do
 	[ -z "$chain" ] && continue
 	toClose+=("$chain")
 done <<< "$chains"
@@ -954,7 +954,7 @@ local running=
 running="$(qvm-ls --running -O NAME --raw-list)" || { B_ERR="Faled to execute qvm-ls." ; B_E ; }
 
 local vm=
-while IFS= read -r vm ; do
+while b_readLine vm ; do
 	[ -z "$vm" ] && continue
 	[[ "$vm" == "dom0" ]] && continue
 	ACTIVE_VMS["$vm"]=0
@@ -963,7 +963,7 @@ done <<< "$running"
 local paused=
 paused="$(qvm-ls --paused -O NAME --raw-list)" || { B_ERR="Faled to execute qvm-ls." ; B_E ; }
 
-while IFS= read -r vm ; do
+while b_readLine vm ; do
 	[ -z "$vm" ] && continue
 	[[ "$vm" == "dom0" ]] && continue
 	ACTIVE_VMS["$vm"]=2
