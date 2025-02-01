@@ -133,7 +133,7 @@ luksInit
 	--bak [folder]	 Create an unencrypted backup of all keys in the given dom0 folder (default: no backup).
 	--keystore [dir] Copy all keys to the encrypted blib key store found inside the dom0 directory [dir] (default: not used).
 			 Use '//' for the default key store at $(b_keys_getDefaultStore).
-	--fs [type]	 Generate the given file system type with mkfs in the decrypted container (default: ext4).
+	--fs [type]	 Generate the given file system type with mkfs in the decrypted container (default: btrfs).
 	--enkey [device] Block device to use as entropy source for the key generation (default: /dev/random).
 	--encon [device] Block device to use as entropy source for the container initialization (default: /dev/urandom).
 	--cy [vm] [opt]	 See open. The [vm] must be the one for which the container is created.
@@ -620,7 +620,7 @@ if [ -n "$keyStore" ] ; then
 	[ ! -d "$keyStore" ] && [ -e "$keyStore" ] && B_ERR="No directory: $keyStore" && B_E
 fi
 
-local fsType="$(b_args_getOption "--fs" "ext4")"
+local fsType="$(b_args_getOption "--fs" "btrfs")"
 
 local coptStr=
 coptStr="$(parseCryptsetupParams "copt" "${DSTS[@]}")" || { B_ERR="Failed to parse the cryptsetup parameters." ; B_E ; }
