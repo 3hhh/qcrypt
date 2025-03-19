@@ -638,8 +638,9 @@ done
 
 #safety checks
 b_info "Doing some safety checks..."
-# a. we need to be root in dom0
+# a. we need to be root in dom0 & possibly some additional software
 b_enforceUser "root"
+[[ "$fsType" == "btrfs" ]] && b_deps "btrfs"
 # b. we need to have enough space in dom0
 checkAvailableSpace "$workingDir" "$size" || { B_ERR="$workingDir provides less space than required by the --size parameter." ; B_E ; }
 # c. all necessary VMs must run
@@ -701,6 +702,17 @@ done
 if [ -n "$fsType" ] ; then
 	b_info "Creating the file system..."
 	mkfs -t "$fsType" "$curDevice" &> /dev/null || { B_ERR="Failed to create the file system of type $fsType on $curDevice." ; B_E ; }
+
+	if [[ "$fsType" == "btrfs" ]] ; then
+		b_info "Enabling btrfs zstd compression..."
+		#unfortunately we have to mount it for that
+		local tmpMp=
+		tmpMp="$(mktemp -d)" || { B_ERR="Failed to create a temporary directory." ; B_E ; }
+		mount "$curDevice" "$tmpMp" || { B_ERR="Failed to mount the btrfs device $curDevice to $tmpMp." ; B_E ; }
+		btrfs property set "$tmpMp" compression zstd || { B_ERR="Failed to enable btrfs compression." ; B_E ; }
+		umount "$tmpMp" || { B_ERR="Failed to umount the btrfs mount $tmpMp." ; B_E ; }
+		rm -rf "$tmpMp" || { B_ERR="Failed to remove $tmpMp." ; B_E ; }
+	fi
 fi
 
 #optional: create a backup of the keys in dom0
