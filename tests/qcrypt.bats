@@ -8,7 +8,7 @@
 load "test_common"
 
 #size of the containers to test luksInit with in MB
-QCRYPT_CSIZE="34" #luks1 requires > 2MB, luks2 > 16 MB (they reserve that much metadata) _per_ layer (i.e. 2x for our tests)
+QCRYPT_CSIZE="150" #luks1 requires > 2MB, luks2 > 16 MB (they reserve that much metadata) _per_ layer (i.e. 2x for our tests), btrfs > 110 MB
 QCRYPT_CSIZE_BYTES="$(( $QCRYPT_CSIZE * 1024 * 1024 ))"
 
 function setup {
