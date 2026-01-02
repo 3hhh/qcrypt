@@ -2,7 +2,7 @@
 #
 #See usage().
 #
-#Copyright (C) 2020  David Hobach  GPLv3
+#Copyright (C) 2026  David Hobach  GPLv3
 #version: 0.9
 #
 #This program is free software: you can redistribute it and/or modify
@@ -21,7 +21,7 @@
 
 #init blib
 source blib
-b_checkVersion 1 6 || { >&2 echo "This script depends on blib (https://github.com/3hhh/blib) version 1.6 or higher. Please install a supported version." ; exit 1 ; }
+b_checkVersion 1 7 || { >&2 echo "This script depends on blib (https://github.com/3hhh/blib) version 1.7 or higher. Please install a supported version." ; exit 1 ; }
 eval "$B_SCRIPT"
 b_import "args"
 b_import "traps"
@@ -535,7 +535,7 @@ for ((i=0;i<=$lastInd;i++)) ; do
 		#testing-vm:dm-2    foo
 		local qvmBlockInfo=""
 		qvmBlockInfo="$(b_dom0_parseQvmBlock "map")" || { B_ERR="Failed to parse qvm-block ls." ; B_E ; }
-		attachFromDevice="$(b_dom0_getQvmBlockInfo "$qvmBlockInfo" "device id" "backend" "$attachTo" "description" "$mapperName" "frontend-dev" "")" || { B_ERR="Failed to find the correct backend device ID for the mapper $mapperName inside the VM $attachTo." ; B_E ; }
+		attachFromDevice="$(b_dom0_getQvmBlockInfo "$qvmBlockInfo" "device id" "backend" "$attachTo" "description" "$mapperName" "frontend-dev" "")" || { B_ERR="Failed to find the correct backend device ID for the mapper $mapperName inside the VM $attachTo. qvm-block output:"$'\n'"$(qvm-block ls)" ; B_E ; }
 		attachFrom="$attachTo"
 	fi
 done

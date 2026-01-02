@@ -142,7 +142,7 @@ Also make sure _not_ to put key file backups inside a qcrypt container...
 
 ## Copyright
 
-© 2020 David Hobach
+© 2026 David Hobach
 GPLv3
 
 See `LICENSE` for details.

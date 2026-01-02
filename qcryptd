@@ -2,7 +2,7 @@
 #
 #See usage().
 #
-#Copyright (C) 2020  David Hobach  GPLv3
+#Copyright (C) 2026  David Hobach  GPLv3
 #version: 0.9
 #
 #This program is free software: you can redistribute it and/or modify
@@ -21,7 +21,7 @@
 
 #init blib
 source blib
-b_checkVersion 1 6 || { >&2 echo "This script depends on blib (https://github.com/3hhh/blib) version 1.6 or higher. Please install a supported version." ; exit 1 ; }
+b_checkVersion 1 7 || { >&2 echo "This script depends on blib (https://github.com/3hhh/blib) version 1.7 or higher. Please install a supported version." ; exit 1 ; }
 eval "$B_SCRIPT"
 b_import "arr"
 b_import "args"
